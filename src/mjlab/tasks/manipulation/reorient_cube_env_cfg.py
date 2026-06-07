@@ -171,10 +171,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "goal": ReorientationCommandCfg(
       entity_name="cube",
       robot_name="robot",
-      # Loose initial threshold (~8.6 deg): the previous 0.1 rad (~5.7 deg) was
-      # tighter than the policy could resolve, so the resample-on-success loop
-      # never fired during training. Tighten via curriculum once chaining works.
-      success_threshold=0.15,
+      success_threshold=0.2,
+      success_hold_steps=5,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
@@ -218,18 +216,12 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "orientation_tracking": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_tracking,
       weight=1.0,
-      # Moderately sharper exp kernel (std=0.5 vs original 1.0). std=0.3 was
-      # overcorrected and killed the reward at large errors (exp(-1/0.3)~0.04 vs
-      # exp(-1/1.0)~0.37), so early training had ~10x less shaping and took ~3x
-      # the iters to reach the same orientation error. 0.5 keeps useful gradient
-      # near the goal (gain 0.15->0.10 rad is ~0.077, still ~2x the original
-      # 0.044) without flattening the large-error landscape.
-      params={"command_name": "goal", "std": 0.5},
+      params={"command_name": "goal", "std": 1.0},
     ),
-    "success_bonus": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_success_bonus,
-      weight=5.0,
-      params={"command_name": "goal"},
+    "orientation_tracking_precise": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_tracking,
+      weight=1.0,
+      params={"command_name": "goal", "std": 0.15},
     ),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
     "joint_vel_hinge": RewardTermCfg(

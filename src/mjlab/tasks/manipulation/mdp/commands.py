@@ -279,10 +279,11 @@ class MultiCubeLiftingCommandCfg(CommandTermCfg):
 class ReorientationCommand(CommandTerm):
   """Goal orientation for in-hand cube reorientation.
 
-  Samples a uniformly random goal orientation (full SO(3)) at episode reset and again
-  whenever the cube reaches the current goal (resample-on-success), so the policy learns
-  to chain reorientations. The cube itself is reset by an event; this term only manages
-  the goal. A translucent "ghost" cube is drawn above the hand at the goal orientation.
+  Samples a uniformly random goal orientation (full SO(3)) at episode reset and
+  resamples once the cube has been held within ``success_threshold`` for
+  ``success_hold_steps`` consecutive steps. The cube itself is reset by an event;
+  this term only manages the goal. A translucent "ghost" cube is drawn above the
+  hand at the goal orientation.
   """
 
   cfg: ReorientationCommandCfg
@@ -304,11 +305,16 @@ class ReorientationCommand(CommandTerm):
     self.goal_quat[:, 0] = 1.0
     # Cached each step in _update_metrics, before any resample-on-success.
     self.orientation_error = torch.zeros(self.num_envs, device=self.device)
+    self.within_threshold = torch.zeros(self.num_envs, device=self.device)
+    self.hold_counter = torch.zeros(
+      self.num_envs, dtype=torch.int32, device=self.device
+    )
     self.at_goal = torch.zeros(self.num_envs, device=self.device)
     self.success_count = torch.zeros(self.num_envs, device=self.device)
     self.episode_success = torch.zeros(self.num_envs, device=self.device)
 
     self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["within_threshold"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["at_goal"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["success_count"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["episode_success"] = torch.zeros(self.num_envs, device=self.device)
@@ -324,16 +330,25 @@ class ReorientationCommand(CommandTerm):
     self.orientation_error = quat_error_magnitude(
       self.object.data.root_link_quat_w, self.goal_quat
     )
-    self.at_goal = (self.orientation_error < self.cfg.success_threshold).float()
+    self.within_threshold = (
+      self.orientation_error < self.cfg.success_threshold
+    ).float()
+    within = self.within_threshold.bool()
+    self.hold_counter = torch.where(
+      within, self.hold_counter + 1, torch.zeros_like(self.hold_counter)
+    )
+    self.at_goal = (self.hold_counter >= self.cfg.success_hold_steps).float()
     self.episode_success = torch.maximum(self.episode_success, self.at_goal)
 
     self.metrics["orientation_error"] = self.orientation_error
+    self.metrics["within_threshold"] = self.within_threshold
     self.metrics["at_goal"] = self.at_goal
     self.metrics["success_count"] = self.success_count
     self.metrics["episode_success"] = self.episode_success
 
   def _sample_goal(self, env_ids: torch.Tensor) -> None:
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
+    self.hold_counter[env_ids] = 0
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     # Episode reset (and timer fallback): fresh goal, clear episode trackers.
@@ -342,8 +357,6 @@ class ReorientationCommand(CommandTerm):
     self._sample_goal(env_ids)
 
   def _update_command(self) -> None:
-    # Resample-on-success: when the cube reaches the goal, pick a new goal. at_goal was
-    # latched in _update_metrics, so rewards reading it this step still see the success.
     success_ids = self.at_goal.nonzero().flatten()
     if len(success_ids) > 0:
       self.success_count[success_ids] += 1.0
@@ -366,7 +379,10 @@ class ReorientationCommandCfg(CommandTermCfg):
   """Name of the (fixed-base mocap) goal-marker entity to pose at the goal orientation.
   If None, no marker is posed."""
   success_threshold: float = 0.1
-  """Orientation error (radians) below which the goal counts as reached."""
+  """Orientation error (radians) below which a step counts as in-threshold."""
+  success_hold_steps: int = 5
+  """Consecutive in-threshold steps required before the goal counts as reached.
+  Setting to 1 recovers the old single-step success criterion."""
 
   @dataclass
   class VizCfg:
