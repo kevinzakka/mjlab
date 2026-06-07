@@ -296,6 +296,9 @@ class ReorientationCommand(CommandTerm):
       env.scene[cfg.marker_name] if cfg.marker_name is not None else None
     )
     self._marker_offset = torch.tensor(cfg.viz.offset, device=self.device)
+    # write_mocap_pose's "all envs" path (env_ids=None) collapses the mocap dim
+    # and breaks the broadcast, so we always pass an explicit env-ids tensor.
+    self._all_env_ids = torch.arange(self.num_envs, device=self.device)
 
     self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
     self.goal_quat[:, 0] = 1.0
@@ -350,7 +353,7 @@ class ReorientationCommand(CommandTerm):
     if self.marker is not None:
       pos = self.robot.data.root_link_pos_w + self._marker_offset
       pose = torch.cat([pos, self.goal_quat], dim=-1)
-      self.marker.write_mocap_pose_to_sim(pose)
+      self.marker.write_mocap_pose_to_sim(pose, env_ids=self._all_env_ids)
 
 
 @dataclass(kw_only=True)
