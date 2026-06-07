@@ -227,15 +227,13 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       azimuth=120.0,
     ),
     sim=SimulationCfg(
-      # The cupped grasp is contact-rich (5 fingers + palm on the cube), so give the
-      # constraint solver generous buffers to avoid nefc/ncon overflow.
       nconmax=150,
       njmax=800,
       mujoco=MujocoCfg(
         timestep=0.005,
         integrator="implicitfast",
         cone="elliptic",
-        impratio=10,
+        impratio=1,
         solver="newton",
         iterations=50,
         ls_iterations=20,

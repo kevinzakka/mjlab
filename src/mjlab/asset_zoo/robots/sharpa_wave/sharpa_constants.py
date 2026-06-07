@@ -109,16 +109,16 @@ HAND_ACTUATORS = tuple(
 # Collision config.
 ##
 
-# The fingertip elastomer pads are the primary contact surface, so they get high
-# sliding friction for grip. The two-tier solref (rigid 0.01, elastomer 0.06 0.9) is
-# intrinsic hand compliance and stays in the XML. Friction[1:] (torsional, rolling)
-# keep their MuJoCo defaults since condim=3 only uses sliding friction.
 SHARPA_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision", ".*_fit"),
   condim={".*": 3},
   friction={
     ".*_pad_collision": (1.0,),
     ".*": (0.5,),
+  },
+  solref={
+    ".*_pad_collision": (0.06, 0.9),
+    ".*": (0.02, 1.0),
   },
 )
 

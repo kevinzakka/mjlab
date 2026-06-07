@@ -21,7 +21,7 @@ def test_sim_options() -> None:
   assert opt.timestep == 0.005
   assert opt.integrator == "implicitfast"
   assert opt.cone == "elliptic"
-  assert opt.impratio == 10
+  assert opt.impratio == 1
 
 
 def test_reorientation_command() -> None:
