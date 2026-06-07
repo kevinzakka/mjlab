@@ -218,9 +218,13 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "orientation_tracking": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_tracking,
       weight=1.0,
-      # Sharper exp kernel (std=0.3 vs old 1.0) so the gradient near the goal is
-      # meaningful: reward gain from 0.15 -> 0.10 rad is ~0.11 instead of ~0.04.
-      params={"command_name": "goal", "std": 0.3},
+      # Moderately sharper exp kernel (std=0.5 vs original 1.0). std=0.3 was
+      # overcorrected and killed the reward at large errors (exp(-1/0.3)~0.04 vs
+      # exp(-1/1.0)~0.37), so early training had ~10x less shaping and took ~3x
+      # the iters to reach the same orientation error. 0.5 keeps useful gradient
+      # near the goal (gain 0.15->0.10 rad is ~0.077, still ~2x the original
+      # 0.044) without flattening the large-error landscape.
+      params={"command_name": "goal", "std": 0.5},
     ),
     "success_bonus": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_success_bonus,
