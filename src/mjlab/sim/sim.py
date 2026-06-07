@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import mujoco
 import mujoco_warp as mjwarp
+import numpy as np
 import torch
 import warp as wp
 
@@ -138,6 +139,21 @@ class MujocoCfg:
           f"Unknown enable flag {flag!r}. Valid flags: {sorted(_ENABLE_FLAG_MAP)}"
         )
       model.opt.enableflags |= _ENABLE_FLAG_MAP[flag]
+
+    # Renormalize convex-hull polygon normals to unit length. Works around a
+    # MuJoCo mesh-compiler bug (mjuu_makenormal in src/user/user_util.cc): for a
+    # near-degenerate hull polygon the `nrm < mjEPS` branch sets the fallback
+    # direction (1, 0, 0) but then still divides by the tiny `nrm`, baking a huge
+    # non-unit normal (e.g. (1.82e14, 0, 0)) into mesh_polynormal. mujoco_warp's
+    # GJK/EPA contact code assumes these normals are unit length; a giant normal
+    # places a contact witness ~1e11 m away, blowing the Newton Hessian up to
+    # ~1e22 and yielding a NaN on the float32 backend (float64 MuJoCo merely
+    # degrades to a finite-but-garbage acceleration). Fixing the compiled model
+    # here, before put_model, keeps the warp solver clean with no per-contact
+    # cost. A degenerate normal collapses to MuJoCo's intended finite fallback.
+    if model.mesh_polynormal.size:
+      norms = np.linalg.norm(model.mesh_polynormal, axis=1, keepdims=True)
+      model.mesh_polynormal[:] /= np.where(norms > mujoco.mjMINVAL, norms, 1.0)
 
 
 @dataclass(kw_only=True)
