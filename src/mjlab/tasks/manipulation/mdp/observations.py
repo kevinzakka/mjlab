@@ -125,19 +125,26 @@ def object_to_goal_orientation_6d(
   env: ManagerBasedRlEnv,
   object_name: str,
   command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Relative rotation from cube to goal as a 6D rotation rep.
+  """Rotation from cube to goal, in the hand base frame, as a 6D rotation rep.
 
-  This is the primary "how much to rotate" signal. The relative rotation is frame
-  independent, so no base-frame transform is needed.
+  This is the primary "how much to rotate" signal. The error rotation's magnitude is
+  frame independent, but we express it in the hand base frame (same basis as
+  ``object_orientation_6d``) so all orientation observations share one frame and stay
+  consistent if the hand mounting orientation ever changes.
   """
   command = env.command_manager.get_term(command_name)
   if not isinstance(command, ReorientationCommand):
     raise TypeError(
       f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
     )
+  robot: Entity = env.scene[asset_cfg.name]
   obj: Entity = env.scene[object_name]
-  rel_quat = quat_mul(command.goal_quat, quat_conjugate(obj.data.root_link_quat_w))
+  base_inv = quat_inv(robot.data.root_link_quat_w)
+  goal_in_base = quat_mul(base_inv, command.goal_quat)
+  cube_in_base = quat_mul(base_inv, obj.data.root_link_quat_w)
+  rel_quat = quat_mul(goal_in_base, quat_conjugate(cube_in_base))
   return _quat_to_6d(rel_quat)
 
 
@@ -161,6 +168,45 @@ def object_ang_vel_b(
   robot: Entity = env.scene[asset_cfg.name]
   obj: Entity = env.scene[object_name]
   return quat_apply_inverse(robot.data.root_link_quat_w, obj.data.root_link_ang_vel_w)
+
+
+def _points_to_base_frame(robot: Entity, points_w: torch.Tensor) -> torch.Tensor:
+  """Rotate world-frame points (B, n, 3) into the hand base frame."""
+  b, n, _ = points_w.shape
+  base_quat = robot.data.root_link_quat_w.unsqueeze(1).expand(b, n, 4).reshape(b * n, 4)
+  return quat_apply_inverse(base_quat, points_w.reshape(b * n, 3)).reshape(b, n, 3)
+
+
+def fingertip_to_object(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Fingertip positions relative to the object center, in the hand base frame.
+
+  Flattened to (B, 3 * num_sites). Tells the policy where each contact point sits
+  on/around the object, which is the key signal for finger gaiting and re-grasping.
+  """
+  robot: Entity = env.scene[asset_cfg.name]
+  obj: Entity = env.scene[object_name]
+  tip_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids]  # (B, n, 3)
+  rel_w = tip_pos_w - obj.data.root_link_pos_w.unsqueeze(1)
+  return _points_to_base_frame(robot, rel_w).reshape(rel_w.shape[0], -1)
+
+
+def fingertip_to_palm(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Fingertip positions relative to the hand base, in the hand base frame.
+
+  Flattened to (B, 3 * num_sites). An explicit Cartesian encoding of hand shape
+  (forward kinematics) that the policy would otherwise have to infer from joint angles.
+  """
+  robot: Entity = env.scene[asset_cfg.name]
+  tip_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids]  # (B, n, 3)
+  rel_w = tip_pos_w - robot.data.root_link_pos_w.unsqueeze(1)
+  return _points_to_base_frame(robot, rel_w).reshape(rel_w.shape[0], -1)
 
 
 def camera_rgb(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:

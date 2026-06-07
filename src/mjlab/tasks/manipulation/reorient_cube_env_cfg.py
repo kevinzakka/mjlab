@@ -26,11 +26,10 @@ from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
-# 50 mm cube. The wrist is fixed (no DOFs), so manipulation is fingertip-driven: the
+# 45 mm cube. The wrist is fixed (no DOFs), so manipulation is fingertip-driven: the
 # cube must ride up in the fingers where the pads can purchase its faces rather than
-# sink into the palm. 50 mm sits in the finger cage for this hand without being as
-# oversized as a palm-filling cube.
-CUBE_HALF_EXTENT = 0.025
+# sink into the palm, while staying small enough for the fingertips to corral it inward.
+CUBE_HALF_EXTENT = 0.0225
 
 
 def get_reorient_cube_spec(
@@ -88,6 +87,20 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       func=manipulation_mdp.object_ang_vel_b,
       params={"object_name": "cube"},
       noise=Unoise(n_min=-0.1, n_max=0.1),
+    ),
+    "fingertip_to_cube": ObservationTermCfg(
+      func=manipulation_mdp.fingertip_to_object,
+      params={
+        "object_name": "cube",
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+      noise=Unoise(n_min=-0.005, n_max=0.005),
+    ),
+    "fingertip_to_palm": ObservationTermCfg(
+      func=manipulation_mdp.fingertip_to_palm,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
     ),
     "actions": ObservationTermCfg(func=mdp.last_action),
   }

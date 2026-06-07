@@ -13,6 +13,15 @@ from mjlab.tasks.manipulation.reorient_cube_env_cfg import (
 # drop termination.
 PALM_SITE = "wrist_site"
 
+# Fingertip sites used for the fingertip-relative observations.
+FINGERTIP_SITES = (
+  "right_thumb_fingertip",
+  "right_index_fingertip",
+  "right_middle_fingertip",
+  "right_ring_fingertip",
+  "right_pinky_fingertip",
+)
+
 # Hand base body, used to center the viewer.
 PALM_BODY = "right_hand_C_MC"
 
@@ -64,6 +73,14 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   )
   cfg.rewards["stay_near_palm"].params["asset_cfg"].site_names = (PALM_SITE,)
   cfg.terminations["cube_dropped"].params["asset_cfg"].site_names = (PALM_SITE,)
+
+  # Fill per-robot fingertip sites into the fingertip observations.
+  cfg.observations["actor"].terms["fingertip_to_cube"].params[
+    "asset_cfg"
+  ].site_names = FINGERTIP_SITES
+  cfg.observations["actor"].terms["fingertip_to_palm"].params[
+    "asset_cfg"
+  ].site_names = FINGERTIP_SITES
 
   # Draw the goal ghost just above the cradled cube.
   goal_cmd = cfg.commands["goal"]

@@ -62,7 +62,7 @@ def test_env_steps_without_nans() -> None:
   try:
     obs, _ = env.reset()
     actor = obs["actor"]
-    assert isinstance(actor, torch.Tensor) and actor.shape == (4, 87)
+    assert isinstance(actor, torch.Tensor) and actor.shape == (4, 117)
     for _ in range(5):
       act = torch.randn(
         env.num_envs, env.action_manager.total_action_dim, device=device
