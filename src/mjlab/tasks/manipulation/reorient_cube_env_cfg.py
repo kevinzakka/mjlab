@@ -35,7 +35,7 @@ CUBE_HALF_EXTENT = 0.025
 
 def get_reorient_cube_spec(
   cube_size: float = CUBE_HALF_EXTENT,
-  mass: float = 0.05,
+  mass: float = 0.15,
   rgba: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 1.0),
 ) -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
@@ -203,6 +203,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "max_distance": 0.15,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
+    ),
+    "cube_velocity": TerminationTermCfg(
+      func=manipulation_mdp.object_velocity_out_of_bounds,
+      params={"object_name": "cube", "max_lin_vel": 5.0, "max_ang_vel": 50.0},
     ),
   }
 
