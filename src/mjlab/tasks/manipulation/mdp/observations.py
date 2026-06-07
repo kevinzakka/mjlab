@@ -11,8 +11,16 @@ from mjlab.sensor import CameraSensor
 from mjlab.tasks.manipulation.mdp.commands import (
   LiftingCommand,
   MultiCubeLiftingCommand,
+  ReorientationCommand,
 )
-from mjlab.utils.lab_api.math import quat_apply, quat_inv
+from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
+  quat_apply,
+  quat_apply_inverse,
+  quat_conjugate,
+  quat_inv,
+  quat_mul,
+)
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -90,6 +98,69 @@ def target_position(
   target_pos_rel_w = target_pos_w - ee_pos_w
   target_pos_ee = quat_apply(quat_inv(ee_quat_w), target_pos_rel_w)
   return target_pos_ee
+
+
+def _quat_to_6d(quat: torch.Tensor) -> torch.Tensor:
+  """First two columns of the rotation matrix as a continuous 6D rotation rep.
+
+  Input quaternion shape (..., 4); output shape (..., 6).
+  """
+  mat = matrix_from_quat(quat)  # (..., 3, 3)
+  return mat[..., :, :2].reshape(*quat.shape[:-1], 6)
+
+
+def object_orientation_6d(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Cube orientation relative to the hand base frame, as a 6D rotation rep."""
+  robot: Entity = env.scene[asset_cfg.name]
+  obj: Entity = env.scene[object_name]
+  rel_quat = quat_mul(quat_inv(robot.data.root_link_quat_w), obj.data.root_link_quat_w)
+  return _quat_to_6d(rel_quat)
+
+
+def object_to_goal_orientation_6d(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  command_name: str,
+) -> torch.Tensor:
+  """Relative rotation from cube to goal as a 6D rotation rep.
+
+  This is the primary "how much to rotate" signal. The relative rotation is frame
+  independent, so no base-frame transform is needed.
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ReorientationCommand):
+    raise TypeError(
+      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
+    )
+  obj: Entity = env.scene[object_name]
+  rel_quat = quat_mul(command.goal_quat, quat_conjugate(obj.data.root_link_quat_w))
+  return _quat_to_6d(rel_quat)
+
+
+def object_lin_vel_b(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Cube linear velocity expressed in the hand base frame."""
+  robot: Entity = env.scene[asset_cfg.name]
+  obj: Entity = env.scene[object_name]
+  return quat_apply_inverse(robot.data.root_link_quat_w, obj.data.root_link_lin_vel_w)
+
+
+def object_ang_vel_b(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Cube angular velocity expressed in the hand base frame."""
+  robot: Entity = env.scene[asset_cfg.name]
+  obj: Entity = env.scene[object_name]
+  return quat_apply_inverse(robot.data.root_link_quat_w, obj.data.root_link_ang_vel_w)
 
 
 def camera_rgb(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:

@@ -4,12 +4,16 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
 import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
+  quat_error_magnitude,
   quat_from_euler_xyz,
+  random_orientation,
   sample_uniform,
 )
 
@@ -272,6 +276,111 @@ class MultiCubeLiftingCommandCfg(CommandTermCfg):
 
   def build(self, env: ManagerBasedRlEnv) -> MultiCubeLiftingCommand:
     return MultiCubeLiftingCommand(self, env)
+
+
+class ReorientationCommand(CommandTerm):
+  """Goal orientation for in-hand cube reorientation.
+
+  Samples a uniformly random goal orientation (full SO(3)) at episode reset and again
+  whenever the cube reaches the current goal (resample-on-success), so the policy learns
+  to chain reorientations. The cube itself is reset by an event; this term only manages
+  the goal. A translucent "ghost" cube is drawn above the hand at the goal orientation.
+  """
+
+  cfg: ReorientationCommandCfg
+
+  def __init__(self, cfg: ReorientationCommandCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+    self.object: Entity = env.scene[cfg.entity_name]
+    self.robot: Entity = env.scene[cfg.robot_name]
+
+    self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
+    self.goal_quat[:, 0] = 1.0
+    # Cached each step in _update_metrics, before any resample-on-success.
+    self.orientation_error = torch.zeros(self.num_envs, device=self.device)
+    self.at_goal = torch.zeros(self.num_envs, device=self.device)
+    self.success_count = torch.zeros(self.num_envs, device=self.device)
+    self.episode_success = torch.zeros(self.num_envs, device=self.device)
+
+    self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["at_goal"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["success_count"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["episode_success"] = torch.zeros(self.num_envs, device=self.device)
+
+  @property
+  def command(self) -> torch.Tensor:
+    return self.goal_quat
+
+  def compute_success(self) -> torch.Tensor:
+    return self.at_goal.bool()
+
+  def _update_metrics(self) -> None:
+    self.orientation_error = quat_error_magnitude(
+      self.object.data.root_link_quat_w, self.goal_quat
+    )
+    self.at_goal = (self.orientation_error < self.cfg.success_threshold).float()
+    self.episode_success = torch.maximum(self.episode_success, self.at_goal)
+
+    self.metrics["orientation_error"] = self.orientation_error
+    self.metrics["at_goal"] = self.at_goal
+    self.metrics["success_count"] = self.success_count
+    self.metrics["episode_success"] = self.episode_success
+
+  def _sample_goal(self, env_ids: torch.Tensor) -> None:
+    self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
+
+  def _resample_command(self, env_ids: torch.Tensor) -> None:
+    # Episode reset (and timer fallback): fresh goal, clear episode trackers.
+    self.episode_success[env_ids] = 0.0
+    self.success_count[env_ids] = 0.0
+    self._sample_goal(env_ids)
+
+  def _update_command(self) -> None:
+    # Resample-on-success: when the cube reaches the goal, pick a new goal. at_goal was
+    # latched in _update_metrics, so rewards reading it this step still see the success.
+    success_ids = self.at_goal.nonzero().flatten()
+    if len(success_ids) > 0:
+      self.success_count[success_ids] += 1.0
+      self._sample_goal(success_ids)
+
+  def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
+    env_indices = visualizer.get_env_indices(self.num_envs)
+    if not env_indices:
+      return
+    half = self.cfg.viz.cube_half_extent
+    offset = np.asarray(self.cfg.viz.offset, dtype=np.float64)
+    for batch in env_indices:
+      center = self.robot.data.root_link_pos_w[batch].cpu().numpy() + offset
+      mat = matrix_from_quat(self.goal_quat[batch]).cpu().numpy()
+      visualizer.add_box(
+        center=center,
+        size=np.array([half, half, half]),
+        mat=mat,
+        color=self.cfg.viz.color,
+        label=f"reorient_goal_{batch}",
+      )
+
+
+@dataclass(kw_only=True)
+class ReorientationCommandCfg(CommandTermCfg):
+  entity_name: str
+  """Name of the cube entity to reorient."""
+  robot_name: str = "robot"
+  """Name of the hand entity (used to place the goal ghost above the palm)."""
+  success_threshold: float = 0.1
+  """Orientation error (radians) below which the goal counts as reached."""
+
+  @dataclass
+  class VizCfg:
+    cube_half_extent: float = 0.03
+    offset: tuple[float, float, float] = (0.0, 0.0, 0.15)
+    color: tuple[float, float, float, float] = (0.2, 0.8, 0.2, 0.35)
+
+  viz: VizCfg = field(default_factory=VizCfg)
+
+  def build(self, env: ManagerBasedRlEnv) -> ReorientationCommand:
+    return ReorientationCommand(self, env)
 
 
 @dataclass(kw_only=True)

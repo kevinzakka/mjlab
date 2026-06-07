@@ -9,6 +9,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.manipulation.mdp.commands import (
   LiftingCommand,
   MultiCubeLiftingCommand,
+  ReorientationCommand,
 )
 
 if TYPE_CHECKING:
@@ -93,6 +94,46 @@ def multi_cube_bring_object_reward(
   obj_pos_w = command.target_object_pos()
   position_error = torch.sum(torch.square(command.target_pos - obj_pos_w), dim=-1)
   return torch.exp(-position_error / std**2)
+
+
+def cube_orientation_tracking(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  std: float,
+) -> torch.Tensor:
+  """Exponential kernel on the cube-to-goal orientation error (radians).
+
+  Uses ``exp(-err / std)`` (exponential in the angle, not Gaussian) so the reward
+  stays meaningfully nonzero across the full [0, pi] range and provides a gradient
+  from any starting error, which a peaked Gaussian does not. Reads the error cached by
+  the command in _update_metrics, so it is consistent with the success detection even
+  on the step a new goal is sampled.
+  """
+  command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
+  return torch.exp(-command.orientation_error / std)
+
+
+def cube_orientation_success_bonus(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+) -> torch.Tensor:
+  """Sparse bonus on each step the cube is within the goal threshold."""
+  command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
+  return command.at_goal
+
+
+def cube_stay_near_palm(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  std: float,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Gaussian kernel keeping the cube near a hand site (discourages dropping)."""
+  robot: Entity = env.scene[asset_cfg.name]
+  obj: Entity = env.scene[object_name]
+  ref_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids].squeeze(1)
+  dist_sq = torch.sum(torch.square(obj.data.root_link_pos_w - ref_pos_w), dim=-1)
+  return torch.exp(-dist_sq / std**2)
 
 
 def joint_velocity_hinge_penalty(

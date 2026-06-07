@@ -8,6 +8,12 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added an in-hand cube reorientation task (``Mjlab-Reorient-Cube-Sharpa``) using
+  the right Sharpa Wave hand. The hand holds a cube and rotates it to match a
+  uniformly random goal orientation; reaching the goal samples a new one so the
+  policy chains reorientations. A translucent ghost cube above the hand shows the
+  goal. The hand is vendored as a kinematic-only model with its actuators,
+  armature, and frictionloss expressed in config.
 - Added ``BuiltinDcMotorActuator``, a native MuJoCo ``<dcmotor>`` wrapper.
   Supports voltage / position / velocity input modes with back-EMF,
   configurable motor constants, and optional integral, slew, inductance,
