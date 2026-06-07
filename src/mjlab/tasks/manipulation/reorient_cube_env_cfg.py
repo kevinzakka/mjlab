@@ -1,10 +1,4 @@
-"""Base configuration for the in-hand cube reorientation task.
-
-This wires the MDP (observations, rewards, terminations, events, command, sim) with
-per-robot placeholders (site names, action scale, entities) filled in by the robot
-config under ``config/<robot>/``. No domain randomization is included; it will be added
-once the task trains reliably.
-"""
+"""Base configuration for the in-hand cube reorientation task."""
 
 import mujoco
 
@@ -26,9 +20,6 @@ from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
-# 45 mm cube. The wrist is fixed (no DOFs), so manipulation is fingertip-driven: the
-# cube must ride up in the fingers where the pads can purchase its faces rather than
-# sink into the palm, while staying small enough for the fingertips to corral it inward.
 CUBE_HALF_EXTENT = 0.0225
 
 
@@ -108,22 +99,16 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   critic_terms = {**actor_terms}
 
   observations = {
-    # Corruption is OFF while debugging the MDP; per-term noise is kept configured so
-    # it can be re-enabled with a single flag once the task trains.
     "actor": ObservationGroupCfg(actor_terms, enable_corruption=False),
     "critic": ObservationGroupCfg(critic_terms, enable_corruption=False),
   }
 
-  # Relative (delta) joint targets: target = current_joint_pos + scale * action. Zero
-  # action holds the current pose (good for holding the cube), and the policy can drive
-  # joints across their full range over multiple steps rather than being pinned within
-  # +-scale of a home offset. The grasp home pose is set by the entity's init_state.
   actions: dict[str, ActionTermCfg] = {
     "joint_pos": RelativeJointPositionActionCfg(
       entity_name="robot",
       actuator_names=(".*",),
-      scale=0.1,  # Per-step delta (rad); ~5 rad/s peak at 50 Hz.
-      clip={".*": (-0.15, 0.15)},  # Bound per-step delta against policy outliers.
+      scale=0.1,
+      # clip={".*": (-0.15, 0.15)},
     )
   }
 
@@ -132,7 +117,6 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="cube",
       robot_name="robot",
       success_threshold=0.1,
-      # Goals change on reset and on success; the timer is an effectively-never fallback.
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
@@ -140,7 +124,6 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   events = {
-    # Position the (fixed-base) hand at the env origin with its configured orientation.
     "reset_base": EventTermCfg(
       func=mdp.reset_root_state_uniform,
       mode="reset",
@@ -155,9 +138,6 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
-    # Place the cube in the hand in a near-canonical (axis-aligned) orientation that the
-    # grip fits without penetration. Only a few degrees of jitter; the goal command
-    # samples full SO(3), so the policy still learns all rotations.
     "reset_cube": EventTermCfg(
       func=mdp.reset_root_state_uniform,
       mode="reset",
@@ -187,19 +167,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=5.0,
       params={"command_name": "goal"},
     ),
-    "stay_near_palm": RewardTermCfg(
-      func=manipulation_mdp.cube_stay_near_palm,
-      weight=0.5,
-      params={
-        "object_name": "cube",
-        "std": 0.05,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.01,
+      weight=-0.001,
       params={
         "max_vel": 2.0,
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
@@ -210,12 +181,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
     "cube_dropped": TerminationTermCfg(
-      func=manipulation_mdp.object_dropped,
-      params={
-        "object_name": "cube",
-        "max_distance": 0.15,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
+      func=manipulation_mdp.object_below_height,
+      params={"object_name": "cube", "minimum_height": 0.10},
     ),
     "cube_velocity": TerminationTermCfg(
       func=manipulation_mdp.object_velocity_out_of_bounds,

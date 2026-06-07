@@ -43,6 +43,21 @@ def object_dropped(
   return distance > max_distance
 
 
+def object_below_height(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  minimum_height: float,
+) -> torch.Tensor:
+  """True when the object's height (above its env's ground) falls below a threshold.
+
+  Height is taken relative to the env origin so it is invariant to the per-env grid
+  offset. This catches the cube falling out of the (palm-up) grasp.
+  """
+  obj: Entity = env.scene[object_name]
+  height = obj.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+  return height < minimum_height
+
+
 def object_velocity_out_of_bounds(
   env: ManagerBasedRlEnv,
   object_name: str,

@@ -71,8 +71,6 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.observations["actor"].terms["cube_pos"].params["asset_cfg"].site_names = (
     PALM_SITE,
   )
-  cfg.rewards["stay_near_palm"].params["asset_cfg"].site_names = (PALM_SITE,)
-  cfg.terminations["cube_dropped"].params["asset_cfg"].site_names = (PALM_SITE,)
 
   # Fill per-robot fingertip sites into the fingertip observations.
   cfg.observations["actor"].terms["fingertip_to_cube"].params[

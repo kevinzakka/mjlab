@@ -36,8 +36,6 @@ def test_palm_site_filled() -> None:
   assert cfg.observations["actor"].terms["cube_pos"].params["asset_cfg"].site_names == (
     PALM_SITE,
   )
-  assert cfg.rewards["stay_near_palm"].params["asset_cfg"].site_names == (PALM_SITE,)
-  assert cfg.terminations["cube_dropped"].params["asset_cfg"].site_names == (PALM_SITE,)
 
 
 def test_no_domain_randomization() -> None:
