@@ -5,6 +5,7 @@ from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.manipulation.reorient_cube_env_cfg import (
+  get_goal_marker_spec,
   get_reorient_cube_spec,
   make_reorient_cube_env_cfg,
 )
@@ -65,7 +66,12 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     spec_fn=get_reorient_cube_spec,
     init_state=EntityCfg.InitialStateCfg(pos=CUBE_POS),
   )
-  cfg.scene.entities = {"robot": robot_cfg, "cube": cube_cfg}
+  goal_marker_cfg = EntityCfg(spec_fn=get_goal_marker_spec)
+  cfg.scene.entities = {
+    "robot": robot_cfg,
+    "cube": cube_cfg,
+    "goal_marker": goal_marker_cfg,
+  }
 
   # Fill per-robot palm site into the terms that need it.
   cfg.observations["actor"].terms["cube_pos"].params["asset_cfg"].site_names = (
@@ -80,9 +86,10 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     "asset_cfg"
   ].site_names = FINGERTIP_SITES
 
-  # Draw the goal ghost just above the cradled cube.
+  # Pose the textured goal-marker cube just above the cradled cube.
   goal_cmd = cfg.commands["goal"]
   assert isinstance(goal_cmd, ReorientationCommandCfg)
+  goal_cmd.marker_name = "goal_marker"
   goal_cmd.viz.offset = GHOST_OFFSET
 
   cfg.viewer.body_name = PALM_BODY

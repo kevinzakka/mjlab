@@ -1,5 +1,7 @@
 """Base configuration for the in-hand cube reorientation task."""
 
+from pathlib import Path
+
 import mujoco
 
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -16,29 +18,83 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.manipulation import mdp as manipulation_mdp
 from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.velocity import mdp
-from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
 CUBE_HALF_EXTENT = 0.0225
 
+_CUBE_TEXTURE_DIR = Path(__file__).parent / "assets" / "reorientation_cube_textures"
+
+# MjSpec cube-texture face order: right, left, up, down, front, back.
+_CUBE_FACES = ("right", "left", "up", "down", "front", "back")
+
+
+def _make_textured_cube_spec(
+  name: str,
+  size: float,
+  rgba: tuple[float, float, float, float],
+  *,
+  freejoint: bool,
+  collide: bool,
+  mass: float | None = None,
+) -> mujoco.MjSpec:
+  """Build a textured-cube MjSpec used by both the physical cube and goal marker."""
+  spec = mujoco.MjSpec()
+
+  spec.add_texture(
+    name=name,
+    type=mujoco.mjtTexture.mjTEXTURE_CUBE,
+    cubefiles=[str(_CUBE_TEXTURE_DIR / f"file{face}.png") for face in _CUBE_FACES],
+  )
+  mat = spec.add_material(name=name, rgba=rgba)
+  mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB.value] = name
+
+  body = spec.worldbody.add_body(name=name)
+  if freejoint:
+    body.add_freejoint(name=f"{name}_joint")
+  geom_kwargs: dict = dict(
+    name=f"{name}_geom",
+    type=mujoco.mjtGeom.mjGEOM_BOX,
+    size=(size, size, size),
+    material=name,
+  )
+  if collide:
+    assert mass is not None
+    geom_kwargs["mass"] = mass
+  else:
+    geom_kwargs.update(contype=0, conaffinity=0, density=0.0, group=2)
+  body.add_geom(**geom_kwargs)
+  return spec
+
 
 def get_reorient_cube_spec(
   cube_size: float = CUBE_HALF_EXTENT,
   mass: float = 0.15,
-  rgba: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 1.0),
 ) -> mujoco.MjSpec:
-  spec = mujoco.MjSpec()
-  body = spec.worldbody.add_body(name="cube")
-  body.add_freejoint(name="cube_joint")
-  body.add_geom(
-    name="cube_geom",
-    type=mujoco.mjtGeom.mjGEOM_BOX,
-    size=(cube_size,) * 3,
+  """Cube with a per-face texture so its orientation is readable in any viewer."""
+  return _make_textured_cube_spec(
+    "cube",
+    cube_size,
+    rgba=(1.0, 1.0, 1.0, 1.0),
+    freejoint=True,
+    collide=True,
     mass=mass,
-    rgba=rgba,
   )
-  return spec
+
+
+def get_goal_marker_spec(cube_size: float = CUBE_HALF_EXTENT) -> mujoco.MjSpec:
+  """Visual-only translucent textured cube used as the goal marker.
+
+  Fixed-base (mjlab wraps it as a mocap body); the reorientation command writes its
+  pose each step to show the goal orientation above the hand.
+  """
+  return _make_textured_cube_spec(
+    "goal",
+    cube_size,
+    rgba=(1.0, 1.0, 1.0, 0.35),
+    freejoint=False,
+    collide=False,
+  )
 
 
 def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
@@ -108,7 +164,6 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="robot",
       actuator_names=(".*",),
       scale=0.1,
-      # clip={".*": (-0.15, 0.15)},
     )
   }
 
@@ -116,7 +171,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "goal": ReorientationCommandCfg(
       entity_name="cube",
       robot_name="robot",
-      success_threshold=0.1,
+      # Loose initial threshold (~8.6 deg): the previous 0.1 rad (~5.7 deg) was
+      # tighter than the policy could resolve, so the resample-on-success loop
+      # never fired during training. Tighten via curriculum once chaining works.
+      success_threshold=0.15,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
@@ -160,7 +218,9 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "orientation_tracking": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_tracking,
       weight=1.0,
-      params={"command_name": "goal", "std": 1.0},
+      # Sharper exp kernel (std=0.3 vs old 1.0) so the gradient near the goal is
+      # meaningful: reward gain from 0.15 -> 0.10 rad is ~0.11 instead of ~0.04.
+      params={"command_name": "goal", "std": 0.3},
     ),
     "success_bonus": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_success_bonus,
@@ -192,9 +252,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
 
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(
-      terrain=TerrainEntityCfg(terrain_type="plane"),
+      terrain=None,
       num_envs=1,
       env_spacing=1.0,
+      extent=0.3,
     ),
     observations=observations,
     actions=actions,

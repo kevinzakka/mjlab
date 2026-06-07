@@ -4,13 +4,11 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-import numpy as np
 import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
-  matrix_from_quat,
   quat_error_magnitude,
   quat_from_euler_xyz,
   random_orientation,
@@ -294,6 +292,10 @@ class ReorientationCommand(CommandTerm):
 
     self.object: Entity = env.scene[cfg.entity_name]
     self.robot: Entity = env.scene[cfg.robot_name]
+    self.marker: Entity | None = (
+      env.scene[cfg.marker_name] if cfg.marker_name is not None else None
+    )
+    self._marker_offset = torch.tensor(cfg.viz.offset, device=self.device)
 
     self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
     self.goal_quat[:, 0] = 1.0
@@ -344,22 +346,11 @@ class ReorientationCommand(CommandTerm):
       self.success_count[success_ids] += 1.0
       self._sample_goal(success_ids)
 
-  def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
-    env_indices = visualizer.get_env_indices(self.num_envs)
-    if not env_indices:
-      return
-    half = self.cfg.viz.cube_half_extent
-    offset = np.asarray(self.cfg.viz.offset, dtype=np.float64)
-    for batch in env_indices:
-      center = self.robot.data.root_link_pos_w[batch].cpu().numpy() + offset
-      mat = matrix_from_quat(self.goal_quat[batch]).cpu().numpy()
-      visualizer.add_box(
-        center=center,
-        size=np.array([half, half, half]),
-        mat=mat,
-        color=self.cfg.viz.color,
-        label=f"reorient_goal_{batch}",
-      )
+    # Pose the textured goal-marker cube above the hand at the goal orientation.
+    if self.marker is not None:
+      pos = self.robot.data.root_link_pos_w + self._marker_offset
+      pose = torch.cat([pos, self.goal_quat], dim=-1)
+      self.marker.write_mocap_pose_to_sim(pose)
 
 
 @dataclass(kw_only=True)
@@ -367,7 +358,10 @@ class ReorientationCommandCfg(CommandTermCfg):
   entity_name: str
   """Name of the cube entity to reorient."""
   robot_name: str = "robot"
-  """Name of the hand entity (used to place the goal ghost above the palm)."""
+  """Name of the hand entity (used to place the goal marker above the palm)."""
+  marker_name: str | None = None
+  """Name of the (fixed-base mocap) goal-marker entity to pose at the goal orientation.
+  If None, no marker is posed."""
   success_threshold: float = 0.1
   """Orientation error (radians) below which the goal counts as reached."""
 
