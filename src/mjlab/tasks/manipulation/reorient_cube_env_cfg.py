@@ -97,6 +97,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       success_hold_steps=5,
       # 50 control steps @ 50 Hz = 1.0 s, matching wuji's 20-step window @ 20 Hz.
       goal_switch_delay=50,
+      # Each new goal is a fresh full SO(3) reorientation, not a small perturbation.
+      success_resample_full_so3=True,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),

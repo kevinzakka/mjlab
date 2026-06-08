@@ -406,12 +406,16 @@ class ReorientationCommand(CommandTerm):
       self.success_count[success_ids] += 1.0
 
     # Advance the goal only once the success window elapses, so a success means a
-    # held pose rather than a grazed one. The next goal is a small perturbation of
-    # the held one (bounded chase) rather than a fresh full-SO(3) draw.
+    # held pose rather than a grazed one. The next goal is either a fresh
+    # uniform-SO(3) draw (a full reorientation each time) or a bounded perturbation
+    # of the held goal, per success_resample_full_so3.
     switch = self.in_success_window & (self.window_timer >= self.cfg.goal_switch_delay)
     switch_ids = switch.nonzero().flatten()
     if len(switch_ids) > 0:
-      self._perturb_goal(switch_ids)
+      if self.cfg.success_resample_full_so3:
+        self._sample_goal(switch_ids)
+      else:
+        self._perturb_goal(switch_ids)
       self.in_success_window[switch_ids] = False
       self.window_timer[switch_ids] = 0
 
@@ -442,7 +446,11 @@ class ReorientationCommandCfg(CommandTermCfg):
   policy to park the pose, rewarding stable holds over grazing the threshold."""
   success_resample_max_angle: float = math.pi / 4
   """Maximum angular distance (radians) between the just-achieved goal and the
-  next one. Bounds the chase tax between consecutive goals."""
+  next one. Bounds the chase tax between consecutive goals. Ignored when
+  ``success_resample_full_so3`` is True."""
+  success_resample_full_so3: bool = False
+  """If True, each goal switch draws a fresh uniform-SO(3) goal (a full
+  reorientation every time) instead of a bounded perturbation of the held goal."""
 
   @dataclass
   class VizCfg:
