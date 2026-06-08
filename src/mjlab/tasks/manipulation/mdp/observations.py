@@ -148,6 +148,47 @@ def object_to_goal_orientation_6d(
   return _quat_to_6d(rel_quat)
 
 
+def goal_ang_vel_b(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Goal angular velocity expressed in the hand base frame.
+
+  The reorientation command integrates the goal each step by this velocity, so
+  the policy needs it to know how the target is moving (and how it will decay).
+  Same frame as ``object_ang_vel_b`` so the two velocity signals are directly
+  comparable.
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ReorientationCommand):
+    raise TypeError(
+      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
+    )
+  robot: Entity = env.scene[asset_cfg.name]
+  return quat_apply_inverse(robot.data.root_link_quat_w, command.goal_ang_vel)
+
+
+def goal_hold_progress(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+) -> torch.Tensor:
+  """Normalized hold progress: ``hold_counter / success_hold_steps`` in [0, 1].
+
+  Tells the policy how close it is to completing the current hold. 0 means it
+  just lost the hold (or fresh goal); 1 (transient) means a success fires this
+  step and the goal will re-velocity. Lets the policy learn "lock in" behavior
+  near the end of the hold window.
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ReorientationCommand):
+    raise TypeError(
+      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
+    )
+  denom = max(command.cfg.success_hold_steps, 1)
+  return (command.hold_counter.float() / denom).clamp(0.0, 1.0).unsqueeze(-1)
+
+
 def object_lin_vel_b(
   env: ManagerBasedRlEnv,
   object_name: str,

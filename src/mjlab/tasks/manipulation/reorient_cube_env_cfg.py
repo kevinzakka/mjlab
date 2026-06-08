@@ -125,6 +125,14 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       func=manipulation_mdp.object_to_goal_orientation_6d,
       params={"object_name": "cube", "command_name": "goal"},
     ),
+    "goal_ang_vel": ObservationTermCfg(
+      func=manipulation_mdp.goal_ang_vel_b,
+      params={"command_name": "goal"},
+    ),
+    "goal_hold_progress": ObservationTermCfg(
+      func=manipulation_mdp.goal_hold_progress,
+      params={"command_name": "goal"},
+    ),
     "cube_lin_vel": ObservationTermCfg(
       func=manipulation_mdp.object_lin_vel_b,
       params={"object_name": "cube"},
