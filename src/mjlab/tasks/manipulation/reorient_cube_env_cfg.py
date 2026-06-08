@@ -245,6 +245,15 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "gate_min_height": 0.10,
       },
     ),
+    "rotate_toward_goal": RewardTermCfg(
+      func=manipulation_mdp.cube_rotation_toward_goal,
+      weight=0.5,
+      params={
+        "command_name": "goal",
+        "gate_object_name": "cube",
+        "gate_min_height": 0.10,
+      },
+    ),
     "hand_pose": RewardTermCfg(
       func=manipulation_mdp.joint_pos_deviation_l2,
       weight=0.0,

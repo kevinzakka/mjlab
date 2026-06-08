@@ -11,6 +11,11 @@ from mjlab.tasks.manipulation.mdp.commands import (
   MultiCubeLiftingCommand,
   ReorientationCommand,
 )
+from mjlab.utils.lab_api.math import (
+  axis_angle_from_quat,
+  quat_conjugate,
+  quat_mul,
+)
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -187,6 +192,50 @@ def cube_orientation_success_bonus(
   command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
   gate = _alive_gate(env, gate_object_name, gate_min_height)
   return command.at_goal if gate is None else command.at_goal * gate
+
+
+def cube_rotation_toward_goal(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  gate_object_name: str | None = None,
+  gate_min_height: float = 0.1,
+) -> torch.Tensor:
+  """Reward for cube angular velocity projected onto the direction that closes
+  the goal orientation error.
+
+  Shaping signal that pays positive reward when the cube is *being rotated*
+  toward the goal, independent of whether the goal has been reached. Without
+  this, the tolerance-kernel reward only pays for *being* near the goal --
+  there's no gradient for the *act* of rotating, so PPO settles into a local
+  optimum of "hold the cube stably anywhere and wiggle fingers cosmetically"
+  rather than discovering regrasps. With this term, any rotation in the
+  correct direction earns positive reward, giving direct gradient signal that
+  active reorientation is valuable.
+
+  Computation:
+    needed_axis_angle = log(goal_quat * cube_quat^-1)    [direction of needed rotation]
+    needed_dir        = needed_axis_angle / |needed_axis_angle|
+    alignment         = max(0, cube_omega . needed_dir)  [in rad/s, clamped to non-neg]
+
+  Clamped to non-negative so wrong-direction motion is "free" (no penalty)
+  rather than punished -- exploration of motions in any direction should be
+  cost-free at the reward layer; the cube_held gate is the only cost of
+  failing.
+
+  If ``gate_object_name`` is set, multiplicatively gated by cube_held.
+  """
+  command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
+  cube = command.object  # already an Entity ref cached by the command
+  # Rotation FROM cube TO goal: goal_quat * cube_quat^-1. Its log gives the
+  # axis-angle vector pointing in the needed direction with magnitude=angle.
+  quat_diff = quat_mul(command.goal_quat, quat_conjugate(cube.data.root_link_quat_w))
+  needed = axis_angle_from_quat(quat_diff)
+  needed_norm = needed.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+  needed_dir = needed / needed_norm
+  omega = cube.data.root_link_ang_vel_w
+  alignment = (omega * needed_dir).sum(dim=-1).clamp_min(0.0)
+  gate = _alive_gate(env, gate_object_name, gate_min_height)
+  return alignment if gate is None else alignment * gate
 
 
 def joint_pos_deviation_l2(
