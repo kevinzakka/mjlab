@@ -130,10 +130,12 @@ def _make_sampling_viz_spec_fn(
   return spec_fn
 
 
-def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+def sharpa_reorient_cube_env_cfg(
+  play: bool = False, use_mesh_collisions: bool = False
+) -> ManagerBasedRlEnvCfg:
   cfg = make_reorient_cube_env_cfg()
 
-  robot_cfg = get_sharpa_right_cfg()
+  robot_cfg = get_sharpa_right_cfg(use_mesh_collisions=use_mesh_collisions)
   robot_cfg.init_state = replace(
     robot_cfg.init_state, pos=HAND_POS, rot=HAND_ROT, joint_pos=HAND_HOME_JOINT_POS
   )

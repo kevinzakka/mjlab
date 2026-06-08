@@ -11,3 +11,13 @@ register_mjlab_task(
   rl_cfg=sharpa_reorient_cube_ppo_runner_cfg(),
   runner_cls=ManipulationOnPolicyRunner,
 )
+
+# Same task, but finger colliders use the link/elastomer meshes instead of the
+# primitive fits. For benchmarking mesh-vs-primitive collision cost on GPU.
+register_mjlab_task(
+  task_id="Mjlab-Reorient-Cube-Sharpa-MeshCollision",
+  env_cfg=sharpa_reorient_cube_env_cfg(use_mesh_collisions=True),
+  play_env_cfg=sharpa_reorient_cube_env_cfg(play=True, use_mesh_collisions=True),
+  rl_cfg=sharpa_reorient_cube_ppo_runner_cfg(),
+  runner_cls=ManipulationOnPolicyRunner,
+)

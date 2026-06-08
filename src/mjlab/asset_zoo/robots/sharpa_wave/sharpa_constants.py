@@ -1,6 +1,7 @@
 """Sharpa Wave hand constants."""
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import mujoco
@@ -14,14 +15,22 @@ from mjlab.utils.spec_config import CollisionCfg
 # MJCF and assets.
 ##
 
-SHARPA_RIGHT_XML: Path = (
-  MJLAB_SRC_PATH / "asset_zoo" / "robots" / "sharpa_wave" / "xmls" / "right_hand.xml"
-)
+_XML_DIR = MJLAB_SRC_PATH / "asset_zoo" / "robots" / "sharpa_wave" / "xmls"
+
+# Finger links collide via primitive fits (fast). The mesh variant swaps each fit
+# for the link's collision mesh (tight to the visual, no spurious contacts) at the
+# cost of mesh-mesh collision on GPU. Flip this to benchmark the two.
+USE_MESH_COLLISIONS: bool = True
+
+SHARPA_RIGHT_XML: Path = _XML_DIR / "right_hand.xml"
+SHARPA_RIGHT_MESH_XML: Path = _XML_DIR / "right_hand_mesh_collision.xml"
 assert SHARPA_RIGHT_XML.exists()
+assert SHARPA_RIGHT_MESH_XML.exists()
 
 
-def get_spec() -> mujoco.MjSpec:
-  return mujoco.MjSpec.from_file(str(SHARPA_RIGHT_XML))
+def get_spec(use_mesh_collisions: bool = USE_MESH_COLLISIONS) -> mujoco.MjSpec:
+  xml = SHARPA_RIGHT_MESH_XML if use_mesh_collisions else SHARPA_RIGHT_XML
+  return mujoco.MjSpec.from_file(str(xml))
 
 
 ##
@@ -141,10 +150,12 @@ ARTICULATION = EntityArticulationInfoCfg(
 )
 
 
-def get_sharpa_right_cfg() -> EntityCfg:
+def get_sharpa_right_cfg(
+  use_mesh_collisions: bool = USE_MESH_COLLISIONS,
+) -> EntityCfg:
   return EntityCfg(
     init_state=HOME,
-    spec_fn=get_spec,
+    spec_fn=partial(get_spec, use_mesh_collisions=use_mesh_collisions),
     collisions=(SHARPA_COLLISION,),
     articulation=ARTICULATION,
   )
