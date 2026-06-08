@@ -227,42 +227,31 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    "orientation_tolerance": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tolerance,
-      weight=5.0,
-      params={
-        "command_name": "goal",
-        "gate_object_name": "cube",
-        "gate_min_height": 0.10,
-      },
+    "orientation_tracking": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_tracking,
+      weight=1.0,
+      params={"command_name": "goal", "std": 1.0},
+    ),
+    "orientation_tracking_precise": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_tracking,
+      weight=1.0,
+      params={"command_name": "goal", "std": 0.15},
+    ),
+    "orientation_hold_progress": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_hold_progress,
+      weight=1.0,
+      params={"command_name": "goal"},
     ),
     "success_bonus": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_success_bonus,
-      weight=10.0,
-      params={
-        "command_name": "goal",
-        "gate_object_name": "cube",
-        "gate_min_height": 0.10,
-      },
+      weight=5.0,
+      params={"command_name": "goal"},
     ),
-    "rotate_toward_goal": RewardTermCfg(
-      func=manipulation_mdp.cube_rotation_toward_goal,
-      weight=0.5,
-      params={
-        "command_name": "goal",
-        "gate_object_name": "cube",
-        "gate_min_height": 0.10,
-      },
-    ),
-    "hand_pose": RewardTermCfg(
-      func=manipulation_mdp.joint_pos_deviation_l2,
-      weight=0.0,
-      params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
-    ),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.005),
+    "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.005,
+      weight=-0.001,
       params={
         "max_vel": 2.0,
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
