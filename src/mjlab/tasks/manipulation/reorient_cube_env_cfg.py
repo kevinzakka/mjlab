@@ -289,5 +289,5 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       ),
     ),
     decimation=4,
-    episode_length_s=10.0,
+    episode_length_s=40.0,
   )
