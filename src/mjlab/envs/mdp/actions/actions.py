@@ -305,20 +305,19 @@ class JointPositionOffsetEMAAction(JointPositionAction):
     assert isinstance(self._offset, torch.Tensor)
     self._offset: torch.Tensor = self._offset
 
-    # Soft joint limits for hard clamping after the offset-and-scale.
-    soft = self._entity.data.soft_joint_pos_limits[:, self._target_ids]
-    self._lower_limit = soft[..., 0]
-    self._upper_limit = soft[..., 1]
-
     self._prev_target = self._offset.clone()
     self._ema_alpha = float(cfg.ema_alpha)
     self._warmup_steps = int(round(cfg.warmup_time_s / float(env.step_dt)))
 
   def process_actions(self, actions: torch.Tensor) -> None:
+    # No joint-limit clamp: the design treats ``default_pos + scale * action``
+    # as a torque-equivalent setpoint for low-gain PD actuators, not as a
+    # strict joint-angle target. Joint physical limits are enforced by the
+    # simulator's hard stops; soft limits are penalized via reward terms
+    # (e.g. ``joint_pos_limits``), not by clamping the setpoint.
     self._raw_actions[:] = actions
     clamped = torch.clamp(actions, -1.0, 1.0)
     raw_target = self._offset + clamped * self._scale
-    raw_target = torch.clamp(raw_target, self._lower_limit, self._upper_limit)
     smoothed = (
       self._ema_alpha * raw_target + (1.0 - self._ema_alpha) * self._prev_target
     )

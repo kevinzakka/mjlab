@@ -230,14 +230,21 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "orientation_tolerance": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_tolerance,
       weight=5.0,
-      params={"command_name": "goal"},
+      params={
+        "command_name": "goal",
+        "gate_object_name": "cube",
+        "gate_min_height": 0.10,
+      },
     ),
     "success_bonus": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_success_bonus,
       weight=10.0,
-      params={"command_name": "goal"},
+      params={
+        "command_name": "goal",
+        "gate_object_name": "cube",
+        "gate_min_height": 0.10,
+      },
     ),
-    "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
     "hand_pose": RewardTermCfg(
       func=manipulation_mdp.joint_pos_deviation_l2,
       weight=0.0,

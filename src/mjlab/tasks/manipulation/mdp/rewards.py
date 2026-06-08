@@ -113,12 +113,36 @@ def cube_orientation_tracking(
   return torch.exp(-command.orientation_error / std)
 
 
+def _alive_gate(
+  env: ManagerBasedRlEnv,
+  object_name: str | None,
+  min_height: float,
+) -> torch.Tensor | None:
+  """Return a per-env multiplicative ``cube_held`` mask in {0., 1.}, or None.
+
+  When ``object_name`` is provided, returns 1.0 where the object's root-link
+  z-position is above ``min_height`` and 0.0 elsewhere. This is used to
+  multiplicatively gate positive task rewards so they zero out when the cube
+  is lost, which makes early termination implicitly costly (the policy loses
+  all future positive reward) without introducing a negative drop_penalty
+  cliff in the value function. See the "principled formulation" discussion:
+  multiplicative gating preserves the always-non-negative reward structure
+  and avoids suicide-incentive local minima.
+  """
+  if object_name is None:
+    return None
+  obj: Entity = env.scene[object_name]
+  return (obj.data.root_link_pos_w[:, 2] > min_height).float()
+
+
 def cube_orientation_tolerance(
   env: ManagerBasedRlEnv,
   command_name: str,
   bound: float = 0.1,
   margin: float = 3.141592653589793,
   value_at_margin: float = 0.1,
+  gate_object_name: str | None = None,
+  gate_min_height: float = 0.1,
 ) -> torch.Tensor:
   """Tolerance kernel: 1.0 inside ``[0, bound]``, linear decay outside.
 
@@ -126,9 +150,13 @@ def cube_orientation_tolerance(
   ``[0, bound]``, so the policy isn't pulled to chase err -> 0 once it is
   comfortably close. Outside the bound, reward decays linearly to
   ``value_at_margin`` at error = ``bound + margin``, then is clamped at that
-  floor. This matches the dm_control / mujoco_playground ``tolerance`` shape
-  with ``sigmoid="linear"`` and is the standard dense signal for in-hand
-  reorientation on LEAP / Allegro tasks.
+  floor. Matches the dm_control / mujoco_playground ``tolerance`` shape with
+  ``sigmoid="linear"``.
+
+  If ``gate_object_name`` is set, the reward is multiplicatively gated by
+  whether that object's root z is above ``gate_min_height``. Use this to
+  zero out positive task reward when the cube is dropped, so termination
+  is implicitly costly without an explicit negative drop_penalty.
 
   Compared to ``cube_orientation_tracking`` (exp kernel): the tolerance kernel
   is *flat* inside the bound (no incentive to over-chase precision, which can
@@ -140,16 +168,25 @@ def cube_orientation_tolerance(
   # Distance outside the upper bound (err is always >= 0).
   d = (err - bound).clamp_min(0.0)
   decay = 1.0 + (value_at_margin - 1.0) * (d / margin).clamp(0.0, 1.0)
-  return torch.where(err <= bound, torch.ones_like(err), decay)
+  reward = torch.where(err <= bound, torch.ones_like(err), decay)
+  gate = _alive_gate(env, gate_object_name, gate_min_height)
+  return reward if gate is None else reward * gate
 
 
 def cube_orientation_success_bonus(
   env: ManagerBasedRlEnv,
   command_name: str,
+  gate_object_name: str | None = None,
+  gate_min_height: float = 0.1,
 ) -> torch.Tensor:
-  """Sparse bonus on each step the cube is within the goal threshold."""
+  """Sparse bonus on each step the cube is within the goal threshold.
+
+  If ``gate_object_name`` is set, the bonus is zeroed out when the cube's
+  root z drops below ``gate_min_height`` (multiplicative ``cube_held`` gate).
+  """
   command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
-  return command.at_goal
+  gate = _alive_gate(env, gate_object_name, gate_min_height)
+  return command.at_goal if gate is None else command.at_goal * gate
 
 
 def joint_pos_deviation_l2(
