@@ -10,6 +10,9 @@ from mjlab.asset_zoo.props.qwerty_cube import (
 from mjlab.asset_zoo.robots.sharpa_wave import get_sharpa_right_cfg
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp import reset_joints_by_offset
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.manipulation.reorient_cube_env_cfg import (
   make_reorient_cube_env_cfg,
@@ -76,6 +79,14 @@ HAND_HOME_JOINT_POS = {
   ".*_DIP": -0.44,
   ".*": 0.0,
 }
+
+# Reset perturbation about the home grasp: a uniform offset added to the home pose
+# and clipped to joint limits. Flexion (curl) gets more range than abduction
+# (spread slides the fingertips off the cube faces).
+FLEXION_JOINTS = (r".*_FE", r".*_IP", r".*_PIP", r".*_DIP", "right_pinky_CMC")
+ABDUCTION_JOINTS = (r".*_AA",)
+FLEXION_RESET_RANGE = (-0.1, 0.1)
+ABDUCTION_RESET_RANGE = (-0.05, 0.05)
 
 
 def _box_from_range(
@@ -159,6 +170,21 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Place the cube in the hand cradle (tracks the hand under reset pitch).
   reset_event = cfg.events["reset_hand_and_cube"]
   reset_event.params["cradle_offset_b"] = CRADLE_OFFSET_B
+
+  # Perturb the home grasp at reset: flexion and spread get separate ranges.
+  for name, joints, joint_range in (
+    ("reset_finger_flexion", FLEXION_JOINTS, FLEXION_RESET_RANGE),
+    ("reset_finger_abduction", ABDUCTION_JOINTS, ABDUCTION_RESET_RANGE),
+  ):
+    cfg.events[name] = EventTermCfg(
+      func=reset_joints_by_offset,
+      mode="reset",
+      params={
+        "position_range": joint_range,
+        "velocity_range": (0.0, 0.0),
+        "asset_cfg": SceneEntityCfg("robot", joint_names=joints),
+      },
+    )
 
   # Draw the cube position-noise region as a group-5 box (hidden until toggled on).
   noise = reset_event.params["position_noise"]

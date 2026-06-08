@@ -114,16 +114,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "object_cfg": SceneEntityCfg("cube"),
       },
     ),
-    # Add U(-0.05, 0.05) to the default joint position at every episode reset.
-    "reset_robot_joints": EventTermCfg(
-      func=mdp.reset_joints_by_offset,
-      mode="reset",
-      params={
-        "position_range": (-0.05, 0.05),
-        "velocity_range": (0.0, 0.0),
-        "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
-      },
-    ),
+    # Per-robot finger-joint resets are added in the robot config (the joint
+    # groups are robot-specific).
   }
 
   rewards = {
