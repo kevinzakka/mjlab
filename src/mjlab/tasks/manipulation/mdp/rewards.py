@@ -122,6 +122,27 @@ def cube_orientation_success_bonus(
   return command.at_goal
 
 
+def cube_orientation_hold_progress(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+) -> torch.Tensor:
+  """Linear ramp ``hold_counter / success_hold_steps`` clamped to [0, 1].
+
+  Per-step dense rewards on orientation error are agnostic to streak length: N
+  in-window steps in a row earn the same total as N separate in-window touches.
+  This term breaks that symmetry by paying out an increasing fraction of 1.0
+  for each consecutive in-threshold step, so the marginal reward of the k-th
+  step in a streak is strictly larger than the k=1 step. Naturally bounded
+  (reward is always in [0, 1]) and resets to 0 the step after a hold completes
+  (since ``_sample_goal`` clears ``hold_counter``) or the moment the cube
+  leaves the threshold. Pairs with the dense orientation rewards: dense pulls
+  the cube into the window, this term pays the policy to *stay* there.
+  """
+  command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
+  denom = max(command.cfg.success_hold_steps, 1)
+  return (command.hold_counter.float() / denom).clamp(0.0, 1.0)
+
+
 def cube_stay_near_palm(
   env: ManagerBasedRlEnv,
   object_name: str,
