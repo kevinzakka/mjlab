@@ -401,7 +401,7 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_hold_steps: int = 5
   """Consecutive in-threshold steps required before the goal counts as reached.
   Setting to 1 recovers the old single-step success criterion."""
-  success_resample_max_angle: float = math.pi / 2
+  success_resample_max_angle: float = math.pi / 4
   """Maximum angular distance (radians) between the just-achieved goal and the
   next one. Bounds the chase tax between consecutive goals."""
 

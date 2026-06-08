@@ -223,6 +223,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=10.0,
       params={"command_name": "goal"},
     ),
+    "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.005),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
