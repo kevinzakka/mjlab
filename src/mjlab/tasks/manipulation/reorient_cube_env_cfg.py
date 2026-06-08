@@ -60,7 +60,15 @@ def _make_textured_cube_spec(
   )
   if collide:
     assert mass is not None
-    geom_kwargs["mass"] = mass
+    # friction=0.3 lets the hand's tuned friction dominate the contact via
+    # the element-wise-max mixing rule, giving more controlled grip than
+    # averaging two large values. solimp dwidth=0.85 (vs default 0.95) makes
+    # the cube softer so imperfect grips are absorbed instead of ejected.
+    geom_kwargs.update(
+      mass=mass,
+      friction=(0.3, 0.005, 0.0001),
+      solimp=(0.85, 0.85, 0.001, 0.5, 2),
+    )
   else:
     geom_kwargs.update(contype=0, conaffinity=0, density=0.0, group=2)
   body.add_geom(**geom_kwargs)
