@@ -167,6 +167,26 @@ def goal_hold_progress(
   return (command.hold_counter.float() / denom).clamp(0.0, 1.0).unsqueeze(-1)
 
 
+def goal_window_progress(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+) -> torch.Tensor:
+  """Normalized success-window progress: ``window_timer / goal_switch_delay`` in [0, 1].
+
+  Counts up only after a hold completes (the success window) and resets to 0 when
+  the goal advances. Paired with :func:`goal_hold_progress` this exposes the full
+  success state machine, so the sparse success bonus and the goal-switch timing are
+  observable (intended as a critic-only privileged term).
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ReorientationCommand):
+    raise TypeError(
+      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
+    )
+  denom = max(command.cfg.goal_switch_delay, 1)
+  return (command.window_timer.float() / denom).clamp(0.0, 1.0).unsqueeze(-1)
+
+
 def object_lin_vel_b(
   env: ManagerBasedRlEnv,
   object_name: str,

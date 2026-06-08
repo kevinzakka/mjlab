@@ -75,7 +75,20 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "prev_actions": ObservationTermCfg(func=mdp.second_last_action),
   }
 
-  critic_terms = {**actor_terms}
+  # Privileged critic-only terms: the success state machine (hold + window) is
+  # internal command state the policy can't see, so feeding it to the value
+  # function makes the sparse success bonus Markovian for the critic.
+  critic_terms = {
+    **actor_terms,
+    "goal_hold_progress": ObservationTermCfg(
+      func=manipulation_mdp.goal_hold_progress,
+      params={"command_name": "goal"},
+    ),
+    "goal_window_progress": ObservationTermCfg(
+      func=manipulation_mdp.goal_window_progress,
+      params={"command_name": "goal"},
+    ),
+  }
 
   observations = {
     "actor": ObservationGroupCfg(actor_terms, enable_corruption=False),
