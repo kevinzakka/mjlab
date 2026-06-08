@@ -94,7 +94,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="cube",
       robot_name="robot",
       success_threshold=0.2,
-      success_hold_steps=5,
+      # 13 control steps @ 50 Hz = 0.26 s, matching wuji's 5-step hold @ 20 Hz.
+      success_hold_steps=13,
       # 50 control steps @ 50 Hz = 1.0 s, matching wuji's 20-step window @ 20 Hz.
       goal_switch_delay=50,
       # Each new goal is a fresh full SO(3) reorientation, not a small perturbation.
