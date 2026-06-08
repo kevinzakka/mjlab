@@ -95,6 +95,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       robot_name="robot",
       success_threshold=0.2,
       success_hold_steps=5,
+      # 50 control steps @ 50 Hz = 1.0 s, matching wuji's 20-step window @ 20 Hz.
+      goal_switch_delay=50,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),

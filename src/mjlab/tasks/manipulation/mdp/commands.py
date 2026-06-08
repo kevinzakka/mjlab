@@ -313,12 +313,23 @@ class ReorientationCommand(CommandTerm):
     self.at_goal = torch.zeros(self.num_envs, device=self.device)
     self.success_count = torch.zeros(self.num_envs, device=self.device)
     self.episode_success = torch.zeros(self.num_envs, device=self.device)
+    # Success window: after a hold completes, keep the goal fixed for
+    # goal_switch_delay more steps (the policy must park the pose, not graze it)
+    # before advancing to the next goal.
+    self.in_success_window = torch.zeros(
+      self.num_envs, dtype=torch.bool, device=self.device
+    )
+    self.window_timer = torch.zeros(
+      self.num_envs, dtype=torch.int32, device=self.device
+    )
 
     self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["within_threshold"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["at_goal"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["success_count"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["episode_success"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["in_success_window"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["window_timer"] = torch.zeros(self.num_envs, device=self.device)
 
   @property
   def command(self) -> torch.Tensor:
@@ -331,14 +342,28 @@ class ReorientationCommand(CommandTerm):
     self.orientation_error = quat_error_magnitude(
       self.object.data.root_link_quat_w, self.goal_quat
     )
-    self.within_threshold = (
-      self.orientation_error < self.cfg.success_threshold
-    ).float()
-    within = self.within_threshold.bool()
+    within = self.orientation_error < self.cfg.success_threshold
+    self.within_threshold = within.float()
+
+    # Approaching phase (not yet in the success window): hold within threshold to
+    # complete a success. ``at_goal`` is a one-shot pulse on the completing step.
+    approaching = ~self.in_success_window
     self.hold_counter = torch.where(
-      within, self.hold_counter + 1, torch.zeros_like(self.hold_counter)
+      approaching & within,
+      self.hold_counter + 1,
+      torch.where(approaching, torch.zeros_like(self.hold_counter), self.hold_counter),
     )
-    self.at_goal = (self.hold_counter >= self.cfg.success_hold_steps).float()
+    just_succeeded = approaching & (self.hold_counter >= self.cfg.success_hold_steps)
+
+    # Enter / advance the success window. Timer resets on a fresh success, then
+    # counts up each step until goal_switch_delay (handled in _update_command).
+    self.in_success_window = self.in_success_window | just_succeeded
+    self.window_timer = torch.where(
+      just_succeeded,
+      torch.zeros_like(self.window_timer),
+      torch.where(self.in_success_window, self.window_timer + 1, self.window_timer),
+    )
+    self.at_goal = just_succeeded.float()
     self.episode_success = torch.maximum(self.episode_success, self.at_goal)
 
     self.metrics["orientation_error"] = self.orientation_error
@@ -346,6 +371,8 @@ class ReorientationCommand(CommandTerm):
     self.metrics["at_goal"] = self.at_goal
     self.metrics["success_count"] = self.success_count
     self.metrics["episode_success"] = self.episode_success
+    self.metrics["in_success_window"] = self.in_success_window.float()
+    self.metrics["window_timer"] = self.window_timer.float()
 
   def _sample_goal(self, env_ids: torch.Tensor) -> None:
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
@@ -368,17 +395,25 @@ class ReorientationCommand(CommandTerm):
     # Episode reset (and timer fallback): fresh full-SO(3) goal, clear episode trackers.
     self.episode_success[env_ids] = 0.0
     self.success_count[env_ids] = 0.0
+    self.in_success_window[env_ids] = False
+    self.window_timer[env_ids] = 0
     self._sample_goal(env_ids)
 
   def _update_command(self) -> None:
-    # On hold completion: sample a small perturbation of the current goal rather
-    # than a fresh full-SO(3) draw, so the chase to the next goal is short and
-    # the policy can keep chaining successes (the new goal is at most
-    # success_resample_max_angle away from the just-achieved one).
+    # Count each completed success once (at_goal is a one-shot pulse).
     success_ids = self.at_goal.nonzero().flatten()
     if len(success_ids) > 0:
       self.success_count[success_ids] += 1.0
-      self._perturb_goal(success_ids)
+
+    # Advance the goal only once the success window elapses, so a success means a
+    # held pose rather than a grazed one. The next goal is a small perturbation of
+    # the held one (bounded chase) rather than a fresh full-SO(3) draw.
+    switch = self.in_success_window & (self.window_timer >= self.cfg.goal_switch_delay)
+    switch_ids = switch.nonzero().flatten()
+    if len(switch_ids) > 0:
+      self._perturb_goal(switch_ids)
+      self.in_success_window[switch_ids] = False
+      self.window_timer[switch_ids] = 0
 
     # Pose the textured goal-marker cube above the hand at the goal orientation.
     if self.marker is not None:
@@ -401,6 +436,10 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_hold_steps: int = 5
   """Consecutive in-threshold steps required before the goal counts as reached.
   Setting to 1 recovers the old single-step success criterion."""
+  goal_switch_delay: int = 0
+  """Steps to hold the achieved goal (the success window) before advancing to the
+  next one. 0 advances immediately on hold completion; larger values require the
+  policy to park the pose, rewarding stable holds over grazing the threshold."""
   success_resample_max_angle: float = math.pi / 4
   """Maximum angular distance (radians) between the just-achieved goal and the
   next one. Bounds the chase tax between consecutive goals."""
