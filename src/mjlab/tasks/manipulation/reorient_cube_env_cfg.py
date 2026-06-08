@@ -5,7 +5,7 @@ from pathlib import Path
 import mujoco
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs.mdp.actions import JointPositionOffsetEMAActionCfg
+from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -60,15 +60,7 @@ def _make_textured_cube_spec(
   )
   if collide:
     assert mass is not None
-    # friction=0.3 lets the hand's tuned friction dominate the contact via
-    # the element-wise-max mixing rule, giving more controlled grip than
-    # averaging two large values. solimp dwidth=0.85 (vs default 0.95) makes
-    # the cube softer so imperfect grips are absorbed instead of ejected.
-    geom_kwargs.update(
-      mass=mass,
-      friction=(0.3, 0.005, 0.0001),
-      solimp=(0.85, 0.85, 0.001, 0.5, 2),
-    )
+    geom_kwargs["mass"] = mass
   else:
     geom_kwargs.update(contype=0, conaffinity=0, density=0.0, group=2)
   body.add_geom(**geom_kwargs)
@@ -133,10 +125,6 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       func=manipulation_mdp.object_to_goal_orientation_6d,
       params={"object_name": "cube", "command_name": "goal"},
     ),
-    "goal_hold_progress": ObservationTermCfg(
-      func=manipulation_mdp.goal_hold_progress,
-      params={"command_name": "goal"},
-    ),
     "cube_lin_vel": ObservationTermCfg(
       func=manipulation_mdp.object_lin_vel_b,
       params={"object_name": "cube"},
@@ -172,12 +160,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   actions: dict[str, ActionTermCfg] = {
-    "joint_pos": JointPositionOffsetEMAActionCfg(
+    "joint_pos": RelativeJointPositionActionCfg(
       entity_name="robot",
       actuator_names=(".*",),
-      scale=0.5,
-      ema_alpha=0.5,
-      warmup_time_s=0.4,
+      scale=0.1,
     )
   }
 
@@ -186,7 +172,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="cube",
       robot_name="robot",
       success_threshold=0.2,
-      success_hold_steps=10,
+      success_hold_steps=5,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
@@ -197,14 +183,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "reset_base": EventTermCfg(
       func=mdp.reset_root_state_uniform,
       mode="reset",
-      params={
-        # Pitch the palm slightly down at reset so the cube has a
-        # consistent "downhill" bias toward the palm cup. Pitch is
-        # rotation around the body Y axis -- with the palm-up base
-        # (R_y(-90)), negative pitch tips the fingertips down.
-        "pose_range": {"pitch": (-0.2, 0.0)},
-        "velocity_range": {},
-      },
+      params={"pose_range": {}, "velocity_range": {}},
     ),
     "reset_robot_joints": EventTermCfg(
       func=mdp.reset_joints_by_offset,
@@ -234,31 +213,21 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    "orientation_tracking": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tracking,
-      weight=1.0,
-      params={"command_name": "goal", "std": 1.0},
-    ),
-    "orientation_tracking_precise": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tracking,
-      weight=1.0,
-      params={"command_name": "goal", "std": 0.15},
-    ),
-    "orientation_hold_progress": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_hold_progress,
-      weight=1.0,
+    "orientation_tolerance": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_tolerance,
+      weight=5.0,
       params={"command_name": "goal"},
     ),
     "success_bonus": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_success_bonus,
-      weight=5.0,
+      weight=10.0,
       params={"command_name": "goal"},
     ),
     "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.005),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.001,
+      weight=-0.005,
       params={
         "max_vel": 2.0,
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
@@ -313,5 +282,5 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       ),
     ),
     decimation=4,
-    episode_length_s=40.0,
+    episode_length_s=10.0,
   )

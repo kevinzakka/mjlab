@@ -113,8 +113,8 @@ SHARPA_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision", ".*_fit"),
   condim={".*": 3},
   friction={
-    ".*_pad_collision": (0.7,),
-    ".*": (0.7,),
+    ".*_pad_collision": (1.0,),
+    ".*": (0.5,),
   },
   solref={
     ".*_pad_collision": (0.06, 0.9),

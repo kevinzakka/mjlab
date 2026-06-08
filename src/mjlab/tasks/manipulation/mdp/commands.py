@@ -9,6 +9,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
+  quat_box_plus,
   quat_error_magnitude,
   quat_from_euler_xyz,
   random_orientation,
@@ -279,30 +280,11 @@ class MultiCubeLiftingCommandCfg(CommandTermCfg):
 class ReorientationCommand(CommandTerm):
   """Goal orientation for in-hand cube reorientation.
 
-  Episode reset draws a uniform-SO(3) goal. The goal is then static while the
-  policy reaches it; once the cube has been held within ``success_threshold``
-  for ``success_hold_steps`` consecutive control steps, the command enters a
-  SUCCESS_WINDOW phase where the goal stays put for ``success_dwell_steps``
-  more steps (so the dense hold-progress reward keeps firing and the achieved
-  goal stays visibly fixed). When the dwell expires the goal jumps to a fresh
-  uniform-SO(3) sample and the cycle repeats.
-
-  State machine, per env:
-
-    APPROACHING (in_dwell=False):
-      hold_counter increments while within_threshold, resets on exit.
-      at_goal pulses to 1 on the step hold_counter reaches success_hold_steps.
-      -> on that step, success_count++, dwell_counter=0, in_dwell=True.
-
-    SUCCESS_WINDOW (in_dwell=True):
-      goal is static; dwell_counter increments each step.
-      hold_counter continues to track within_threshold (so the hold_progress
-      reward keeps firing while the cube stays near the goal during dwell).
-      at_goal stays 0 -- it only ever pulses on the entry transition.
-      -> when dwell_counter reaches success_dwell_steps: sample fresh goal,
-         reset hold_counter and dwell_counter, in_dwell=False.
-
-  A translucent "ghost" cube is drawn above the hand at the goal orientation.
+  Samples a uniformly random goal orientation (full SO(3)) at episode reset and
+  resamples once the cube has been held within ``success_threshold`` for
+  ``success_hold_steps`` consecutive steps. The cube itself is reset by an event;
+  this term only manages the goal. A translucent "ghost" cube is drawn above the
+  hand at the goal orientation.
   """
 
   cfg: ReorientationCommandCfg
@@ -322,18 +304,12 @@ class ReorientationCommand(CommandTerm):
 
     self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
     self.goal_quat[:, 0] = 1.0
-    # Cached each step in _update_metrics, before any state-machine transitions.
+    # Cached each step in _update_metrics, before any resample-on-success.
     self.orientation_error = torch.zeros(self.num_envs, device=self.device)
     self.within_threshold = torch.zeros(self.num_envs, device=self.device)
     self.hold_counter = torch.zeros(
       self.num_envs, dtype=torch.int32, device=self.device
     )
-    self.dwell_counter = torch.zeros(
-      self.num_envs, dtype=torch.int32, device=self.device
-    )
-    self.in_dwell = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-    # at_goal pulses 1 on the step the hold completes (entering SUCCESS_WINDOW);
-    # consumers reading it that step still see the success before resampling.
     self.at_goal = torch.zeros(self.num_envs, device=self.device)
     self.success_count = torch.zeros(self.num_envs, device=self.device)
     self.episode_success = torch.zeros(self.num_envs, device=self.device)
@@ -362,10 +338,7 @@ class ReorientationCommand(CommandTerm):
     self.hold_counter = torch.where(
       within, self.hold_counter + 1, torch.zeros_like(self.hold_counter)
     )
-    # at_goal pulses only on the step hold completes AND we're not already in
-    # the dwell phase -- so each success cycle generates exactly one pulse.
-    just_completed_hold = self.hold_counter >= self.cfg.success_hold_steps
-    self.at_goal = (just_completed_hold & ~self.in_dwell).float()
+    self.at_goal = (self.hold_counter >= self.cfg.success_hold_steps).float()
     self.episode_success = torch.maximum(self.episode_success, self.at_goal)
 
     self.metrics["orientation_error"] = self.orientation_error
@@ -377,8 +350,19 @@ class ReorientationCommand(CommandTerm):
   def _sample_goal(self, env_ids: torch.Tensor) -> None:
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
     self.hold_counter[env_ids] = 0
-    self.dwell_counter[env_ids] = 0
-    self.in_dwell[env_ids] = False
+
+  def _perturb_goal(self, env_ids: torch.Tensor) -> None:
+    # Compose the current goal with a small random rotation: axis uniform on S^2,
+    # angle uniform in [0, success_resample_max_angle]. Bounds the angular distance
+    # between consecutive goals so chasing the next goal after a completed hold is
+    # cheap (~few control steps) instead of paying a full random-SO(3) chase tax.
+    n = len(env_ids)
+    axis = torch.randn(n, 3, device=self.device)
+    axis = axis / axis.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+    angle = torch.rand(n, device=self.device) * self.cfg.success_resample_max_angle
+    delta = axis * angle.unsqueeze(-1)
+    self.goal_quat[env_ids] = quat_box_plus(self.goal_quat[env_ids], delta)
+    self.hold_counter[env_ids] = 0
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     # Episode reset (and timer fallback): fresh full-SO(3) goal, clear episode trackers.
@@ -387,24 +371,16 @@ class ReorientationCommand(CommandTerm):
     self._sample_goal(env_ids)
 
   def _update_command(self) -> None:
-    # 1. Enter SUCCESS_WINDOW for envs that just completed a hold.
-    enter_dwell = self.at_goal.bool()
-    if enter_dwell.any():
-      self.success_count[enter_dwell] += 1.0
-      self.in_dwell[enter_dwell] = True
-      self.dwell_counter[enter_dwell] = 0
+    # On hold completion: sample a small perturbation of the current goal rather
+    # than a fresh full-SO(3) draw, so the chase to the next goal is short and
+    # the policy can keep chaining successes (the new goal is at most
+    # success_resample_max_angle away from the just-achieved one).
+    success_ids = self.at_goal.nonzero().flatten()
+    if len(success_ids) > 0:
+      self.success_count[success_ids] += 1.0
+      self._perturb_goal(success_ids)
 
-    # 2. Advance the dwell counter on envs currently in SUCCESS_WINDOW.
-    self.dwell_counter = torch.where(
-      self.in_dwell, self.dwell_counter + 1, self.dwell_counter
-    )
-
-    # 3. Exit SUCCESS_WINDOW (sample new goal) when dwell completes.
-    exit_dwell = self.in_dwell & (self.dwell_counter >= self.cfg.success_dwell_steps)
-    if exit_dwell.any():
-      self._sample_goal(exit_dwell.nonzero().flatten())
-
-    # 4. Pose the textured goal-marker cube above the hand at the goal orientation.
+    # Pose the textured goal-marker cube above the hand at the goal orientation.
     if self.marker is not None:
       pos = self.robot.data.root_link_pos_w + self._marker_offset
       pose = torch.cat([pos, self.goal_quat], dim=-1)
@@ -423,12 +399,11 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_threshold: float = 0.1
   """Orientation error (radians) below which a step counts as in-threshold."""
   success_hold_steps: int = 5
-  """Consecutive in-threshold steps required before the goal counts as reached
-  (transitions APPROACHING -> SUCCESS_WINDOW). Setting to 1 recovers the old
-  single-step success criterion."""
-  success_dwell_steps: int = 20
-  """Steps to stay in SUCCESS_WINDOW (goal static, hold-progress reward still
-  firing) before sampling a fresh uniform-SO(3) goal."""
+  """Consecutive in-threshold steps required before the goal counts as reached.
+  Setting to 1 recovers the old single-step success criterion."""
+  success_resample_max_angle: float = math.pi / 4
+  """Maximum angular distance (radians) between the just-achieved goal and the
+  next one. Bounds the chase tax between consecutive goals."""
 
   @dataclass
   class VizCfg:
