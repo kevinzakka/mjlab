@@ -60,17 +60,7 @@ def _make_textured_cube_spec(
   )
   if collide:
     assert mass is not None
-    # Tighten cube contact to reduce visible finger-cube penetration. See
-    # MuJoCo Modeling chapter (Solver parameters): steady-state penetration
-    # scales as timeconst^2 * (1 - dwidth). timeconst=0.01 is the safe
-    # 2*timestep floor; dwidth=0.99 cuts the (1-d) term ~5x. priority=1
-    # ensures these values dominate over the fingertip-geom defaults.
-    geom_kwargs.update(
-      mass=mass,
-      solref=(0.01, 1.0),
-      solimp=(0.95, 0.99, 0.001, 0.5, 2),
-      priority=1,
-    )
+    geom_kwargs["mass"] = mass
   else:
     geom_kwargs.update(contype=0, conaffinity=0, density=0.0, group=2)
   body.add_geom(**geom_kwargs)
