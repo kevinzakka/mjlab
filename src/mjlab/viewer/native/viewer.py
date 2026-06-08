@@ -533,7 +533,7 @@ class NativeMujocoViewer(BaseViewer):
   def _setup_camera(self) -> None:
     """Configure native viewer camera from viewer config."""
     assert self.viewer is not None
-    self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_WORLD.value
+    # self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_WORLD.value
 
     if not self.cfg or not hasattr(self.cfg, "origin_type"):
       self._set_camera_auto_track()

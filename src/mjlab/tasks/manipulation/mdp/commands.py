@@ -412,15 +412,15 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_hold_steps: int = 5
   """Consecutive in-threshold steps required before the goal counts as reached.
   Setting to 1 recovers the old single-step success criterion."""
-  goal_ang_vel_min: float = 1.0
+  goal_ang_vel_min: float = 3.0
   """Minimum goal angular-velocity magnitude (rad/s) sampled on hold completion."""
-  goal_ang_vel_max: float = 5.0
+  goal_ang_vel_max: float = 10.0
   """Maximum goal angular-velocity magnitude (rad/s) sampled on hold completion."""
-  goal_ang_vel_decay: float = 0.92
+  goal_ang_vel_decay: float = 0.94
   """Per-control-step multiplicative decay of the goal angular velocity.
-  At ~50 Hz control this gives a ~0.25 s e-folding time, so the goal settles
-  within ~0.5 s of a hold completion -- enough for the policy to catch it
-  and start the next hold."""
+  At ~50 Hz control this gives a ~0.32 s e-folding time, so the goal settles
+  within ~0.8 s of a hold completion -- enough visible rotation before the
+  policy can catch it and start the next hold."""
 
   @dataclass
   class VizCfg:
