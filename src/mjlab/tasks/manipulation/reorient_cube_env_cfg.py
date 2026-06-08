@@ -228,10 +228,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,
       params={"command_name": "goal"},
     ),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.005),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.001,
+      weight=-0.005,
       params={
         "max_vel": 2.0,
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),

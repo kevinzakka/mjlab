@@ -125,22 +125,30 @@ def cube_orientation_success_bonus(
 def cube_orientation_hold_progress(
   env: ManagerBasedRlEnv,
   command_name: str,
+  exponent: float = 3.0,
 ) -> torch.Tensor:
-  """Linear ramp ``hold_counter / success_hold_steps`` clamped to [0, 1].
+  """Back-loaded ramp ``(hold_counter / success_hold_steps) ** exponent``.
 
-  Per-step dense rewards on orientation error are agnostic to streak length: N
-  in-window steps in a row earn the same total as N separate in-window touches.
-  This term breaks that symmetry by paying out an increasing fraction of 1.0
-  for each consecutive in-threshold step, so the marginal reward of the k-th
-  step in a streak is strictly larger than the k=1 step. Naturally bounded
-  (reward is always in [0, 1]) and resets to 0 the step after a hold completes
-  (since ``_sample_goal`` clears ``hold_counter``) or the moment the cube
-  leaves the threshold. Pairs with the dense orientation rewards: dense pulls
-  the cube into the window, this term pays the policy to *stay* there.
+  Pays an increasing fraction of 1.0 for each consecutive in-threshold step,
+  rewarding the policy for *staying* in the window rather than just touching
+  it. The default ``exponent=3.0`` concentrates the reward in the last 1-2
+  steps of the streak: with hold_steps=5, marginals are
+  [0.008, 0.056, 0.152, 0.296, 0.488] -- the final step is worth ~0.5 of the
+  total, roughly equal to the sum of all earlier steps. This back-loading is
+  intentional: a linear (exponent=1) ramp is gamed by policies that bounce
+  the cube just past the threshold at counter=N-1 and re-enter, harvesting
+  near-maximal partial credit without ever completing a hold. With exponent
+  >= 3, the marginal value of the final step dominates, so deliberately
+  resetting the counter is strictly more costly than continuing.
+
+  Bounded to [0, 1] and resets to 0 the step after a hold completes
+  (``_sample_goal`` clears ``hold_counter``) or the moment the cube leaves
+  the threshold.
   """
   command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
   denom = max(command.cfg.success_hold_steps, 1)
-  return (command.hold_counter.float() / denom).clamp(0.0, 1.0)
+  progress = (command.hold_counter.float() / denom).clamp(0.0, 1.0)
+  return progress.pow(exponent)
 
 
 def cube_stay_near_palm(
