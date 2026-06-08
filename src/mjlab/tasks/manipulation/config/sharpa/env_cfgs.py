@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import mujoco
+
 from mjlab.asset_zoo.props.qwerty_cube import (
   get_qwerty_cube_goal_marker_spec,
   get_qwerty_cube_spec,
@@ -31,21 +33,16 @@ PALM_BODY = "right_hand_C_MC"
 # Raise the (fixed-base) hand above the ground plane so no part of it dips below z=0.
 HAND_POS = (0.0, 0.0, 0.09)
 
-# Palm-up base orientation: -90 deg about y rotates the hand's local +x (the grasp
-# opening, where the tactile pads face) to world +z, so the cupped fingers form an
-# upward-facing bowl that cradles the cube under gravity.
+# Palm-up base orientation.
 HAND_ROT = (0.70710678, 0.0, -0.70710678, 0.0)
 
 # Cube cradle, expressed relative to the hand base: center of the cup, between the palm
 # and the curled fingertips.
-CRADLE_LOCAL = (-0.05, 0.0, 0.052)
+CRADLE_LOCAL = (-0.08, 0.0, 0.052)
 CUBE_POS = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + HAND_POS[2])
 # Goal ghost sits above the cradled cube (offset is relative to the hand base).
 GHOST_OFFSET = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + 0.13)
 
-# Cup grasp home pose (also the action offset). Fingers + thumb rest ON the cube faces
-# in light contact (not curled inside it), so an axis-aligned cube nestles without
-# penetrating. First-match-wins, so specific joints precede the general patterns.
 HAND_HOME_JOINT_POS = {
   "right_thumb_CMC_AA": 0.25,
   "right_thumb_CMC_FE": -0.55,
@@ -55,6 +52,47 @@ HAND_HOME_JOINT_POS = {
   ".*_DIP": -0.44,
   ".*": 0.0,
 }
+
+
+def _box_from_range(
+  center: tuple[float, float, float],
+  pose_range: dict[str, tuple[float, float]],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+  """Translate a uniform (lo, hi) position range into a box center and half-size."""
+  axes = ("x", "y", "z")
+  box_center = list(center)
+  half = []
+  for i, axis in enumerate(axes):
+    lo, hi = pose_range.get(axis, (0.0, 0.0))
+    box_center[i] += 0.5 * (lo + hi)
+    half.append(
+      max(0.5 * (hi - lo), 1e-4)
+    )  # Floor so a zero-width range still renders.
+  return (box_center[0], box_center[1], box_center[2]), (half[0], half[1], half[2])
+
+
+def _make_sampling_viz_spec_fn(
+  center: tuple[float, float, float],
+  pose_range: dict[str, tuple[float, float]],
+):
+  """Scene spec hook that draws the cube position-sampling region as a group-5 box.
+
+  Group 5 is hidden by default, so this is a toggle-on debugging aid for sanity
+  checking the reset distribution against the cradle geometry.
+  """
+  box_center, half = _box_from_range(center, pose_range)
+
+  def spec_fn(spec: mujoco.MjSpec) -> None:
+    spec.worldbody.add_site(
+      name="cube_sampling_region",
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      pos=box_center,
+      size=half,
+      group=5,
+      rgba=(0.2, 0.8, 0.2, 0.25),
+    )
+
+  return spec_fn
 
 
 def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -93,6 +131,10 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   assert isinstance(goal_cmd, ReorientationCommandCfg)
   goal_cmd.marker_name = "goal_marker"
   goal_cmd.viz.offset = GHOST_OFFSET
+
+  # Draw the cube reset distribution as a group-5 box (hidden until toggled on).
+  cube_pose_range = cfg.events["reset_cube"].params["pose_range"]
+  cfg.scene.spec_fn = _make_sampling_viz_spec_fn(CUBE_POS, cube_pose_range)
 
   cfg.viewer.body_name = PALM_BODY
 
