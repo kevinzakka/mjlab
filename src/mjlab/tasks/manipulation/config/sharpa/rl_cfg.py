@@ -12,8 +12,9 @@ def sharpa_reorient_cube_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       activation="elu",
       obs_normalization=True,
       distribution_cfg={
-        "class_name": "BetaDistribution",
-        "action_range": (-1.0, 1.0),
+        "class_name": "mjlab.rl.distributions:SoftplusGaussianDistribution",
+        "init_std": 0.5,
+        "min_std": 0.2,
       },
     ),
     critic=RslRlModelCfg(
@@ -39,4 +40,8 @@ def sharpa_reorient_cube_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     save_interval=100,
     num_steps_per_env=24,
     max_iterations=10_000,
+    # SoftplusGaussian samples are unbounded; clamp to the [-1, 1] action set
+    # the action term expects. Beta was bounded by construction; Gaussian is
+    # not, so the wrapper has to clip.
+    clip_actions=1.0,
   )
