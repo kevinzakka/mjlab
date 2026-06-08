@@ -113,6 +113,36 @@ def cube_orientation_tracking(
   return torch.exp(-command.orientation_error / std)
 
 
+def cube_orientation_tolerance(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  bound: float = 0.1,
+  margin: float = 3.141592653589793,
+  value_at_margin: float = 0.1,
+) -> torch.Tensor:
+  """Tolerance kernel: 1.0 inside ``[0, bound]``, linear decay outside.
+
+  Reward is exactly 1.0 for any orientation error in the "good enough" band
+  ``[0, bound]``, so the policy isn't pulled to chase err -> 0 once it is
+  comfortably close. Outside the bound, reward decays linearly to
+  ``value_at_margin`` at error = ``bound + margin``, then is clamped at that
+  floor. This matches the dm_control / mujoco_playground ``tolerance`` shape
+  with ``sigmoid="linear"`` and is the standard dense signal for in-hand
+  reorientation on LEAP / Allegro tasks.
+
+  Compared to ``cube_orientation_tracking`` (exp kernel): the tolerance kernel
+  is *flat* inside the bound (no incentive to over-chase precision, which can
+  destabilize a held grasp) and provides a *constant* gradient outside (PPO
+  has the same shaping signal whether the cube is at err=0.5 or err=2.5).
+  """
+  command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
+  err = command.orientation_error
+  # Distance outside the upper bound (err is always >= 0).
+  d = (err - bound).clamp_min(0.0)
+  decay = 1.0 + (value_at_margin - 1.0) * (d / margin).clamp(0.0, 1.0)
+  return torch.where(err <= bound, torch.ones_like(err), decay)
+
+
 def cube_orientation_success_bonus(
   env: ManagerBasedRlEnv,
   command_name: str,

@@ -9,6 +9,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
+  quat_box_plus,
   quat_error_magnitude,
   quat_from_euler_xyz,
   random_orientation,
@@ -350,17 +351,34 @@ class ReorientationCommand(CommandTerm):
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
     self.hold_counter[env_ids] = 0
 
+  def _perturb_goal(self, env_ids: torch.Tensor) -> None:
+    # Compose the current goal with a small random rotation: axis uniform on S^2,
+    # angle uniform in [0, success_resample_max_angle]. Bounds the angular distance
+    # between consecutive goals so chasing the next goal after a completed hold is
+    # cheap (~few control steps) instead of paying a full random-SO(3) chase tax.
+    n = len(env_ids)
+    axis = torch.randn(n, 3, device=self.device)
+    axis = axis / axis.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+    angle = torch.rand(n, device=self.device) * self.cfg.success_resample_max_angle
+    delta = axis * angle.unsqueeze(-1)
+    self.goal_quat[env_ids] = quat_box_plus(self.goal_quat[env_ids], delta)
+    self.hold_counter[env_ids] = 0
+
   def _resample_command(self, env_ids: torch.Tensor) -> None:
-    # Episode reset (and timer fallback): fresh goal, clear episode trackers.
+    # Episode reset (and timer fallback): fresh full-SO(3) goal, clear episode trackers.
     self.episode_success[env_ids] = 0.0
     self.success_count[env_ids] = 0.0
     self._sample_goal(env_ids)
 
   def _update_command(self) -> None:
+    # On hold completion: sample a small perturbation of the current goal rather
+    # than a fresh full-SO(3) draw, so the chase to the next goal is short and
+    # the policy can keep chaining successes (the new goal is at most
+    # success_resample_max_angle away from the just-achieved one).
     success_ids = self.at_goal.nonzero().flatten()
     if len(success_ids) > 0:
       self.success_count[success_ids] += 1.0
-      self._sample_goal(success_ids)
+      self._perturb_goal(success_ids)
 
     # Pose the textured goal-marker cube above the hand at the goal orientation.
     if self.marker is not None:
@@ -383,6 +401,9 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_hold_steps: int = 5
   """Consecutive in-threshold steps required before the goal counts as reached.
   Setting to 1 recovers the old single-step success criterion."""
+  success_resample_max_angle: float = math.pi / 2
+  """Maximum angular distance (radians) between the just-achieved goal and the
+  next one. Bounds the chase tax between consecutive goals."""
 
   @dataclass
   class VizCfg:

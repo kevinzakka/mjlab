@@ -213,19 +213,14 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    "orientation_tracking": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tracking,
-      weight=1.0,
-      params={"command_name": "goal", "std": 1.0},
+    "orientation_tolerance": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_tolerance,
+      weight=5.0,
+      params={"command_name": "goal"},
     ),
-    "orientation_tracking_precise": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tracking,
-      weight=1.0,
-      params={"command_name": "goal", "std": 0.15},
-    ),
-    "orientation_hold_progress": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_hold_progress,
-      weight=1.0,
+    "success_bonus": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_success_bonus,
+      weight=10.0,
       params={"command_name": "goal"},
     ),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.005),
