@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import mujoco
+import numpy as np
 
 from mjlab.asset_zoo.props.qwerty_cube import (
   get_qwerty_cube_goal_marker_spec,
@@ -42,6 +43,29 @@ CRADLE_LOCAL = (-0.08, 0.0, 0.052)
 CUBE_POS = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + HAND_POS[2])
 # Goal ghost sits above the cradled cube (offset is relative to the hand base).
 GHOST_OFFSET = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + 0.13)
+
+
+# Cradle in the hand-base body frame, so the cube tracks the hand under reset pitch.
+def _world_to_body(
+  vec_w: tuple[float, ...], quat: tuple[float, ...]
+) -> tuple[float, ...]:
+  conj = np.zeros(4)
+  mujoco.mju_negQuat(conj, np.array(quat))
+  res = np.zeros(3)
+  mujoco.mju_rotVecQuat(res, np.array(vec_w), conj)
+  return tuple(res.tolist())
+
+
+# Spawn the cube lifted along the palm normal so SO(3) corner-down orientations
+# drop into the cup instead of penetrating it (corner reaches ~1.65 cm deeper).
+CUBE_RESET_LIFT = 0.015
+_cradle_b = _world_to_body(
+  tuple(c - h for c, h in zip(CUBE_POS, HAND_POS, strict=True)), HAND_ROT
+)
+_up_b = _world_to_body((0.0, 0.0, 1.0), HAND_ROT)
+CRADLE_OFFSET_B = tuple(
+  o + CUBE_RESET_LIFT * u for o, u in zip(_cradle_b, _up_b, strict=True)
+)
 
 HAND_HOME_JOINT_POS = {
   "right_thumb_CMC_AA": 0.25,
@@ -132,8 +156,13 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   goal_cmd.marker_name = "goal_marker"
   goal_cmd.viz.offset = GHOST_OFFSET
 
-  # Draw the cube reset distribution as a group-5 box (hidden until toggled on).
-  cube_pose_range = cfg.events["reset_cube"].params["pose_range"]
+  # Place the cube in the hand cradle (tracks the hand under reset pitch).
+  reset_event = cfg.events["reset_hand_and_cube"]
+  reset_event.params["cradle_offset_b"] = CRADLE_OFFSET_B
+
+  # Draw the cube position-noise region as a group-5 box (hidden until toggled on).
+  noise = reset_event.params["position_noise"]
+  cube_pose_range = {ax: (-noise, noise) for ax in ("x", "y", "z")}
   cfg.scene.spec_fn = _make_sampling_viz_spec_fn(CUBE_POS, cube_pose_range)
 
   cfg.viewer.body_name = PALM_BODY

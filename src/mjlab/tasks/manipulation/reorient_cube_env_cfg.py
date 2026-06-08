@@ -102,11 +102,19 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   events = {
-    "reset_base": EventTermCfg(
-      func=mdp.reset_root_state_uniform,
+    # Tilt the hand and nestle the cube in the (tilted) cradle with a random
+    # SO(3) orientation. cradle_offset_b is filled in per-robot.
+    "reset_hand_and_cube": EventTermCfg(
+      func=manipulation_mdp.reset_hand_and_object,
       mode="reset",
-      params={"pose_range": {}, "velocity_range": {}},
+      params={
+        "hand_pitch_range": (-0.4, 0.1),
+        "position_noise": 0.005,
+        "cradle_offset_b": (0.0, 0.0, 0.0),  # Set per-robot.
+        "object_cfg": SceneEntityCfg("cube"),
+      },
     ),
+    # Add U(-0.05, 0.05) to the default joint position at every episode reset.
     "reset_robot_joints": EventTermCfg(
       func=mdp.reset_joints_by_offset,
       mode="reset",
@@ -114,22 +122,6 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "position_range": (-0.05, 0.05),
         "velocity_range": (0.0, 0.0),
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
-      },
-    ),
-    "reset_cube": EventTermCfg(
-      func=mdp.reset_root_state_uniform,
-      mode="reset",
-      params={
-        "pose_range": {
-          "x": (-0.005, 0.005),
-          "y": (-0.005, 0.005),
-          "z": (-0.005, 0.005),
-          "roll": (-0.1, 0.1),
-          "pitch": (-0.1, 0.1),
-          "yaw": (-0.1, 0.1),
-        },
-        "velocity_range": {},
-        "asset_cfg": SceneEntityCfg("cube"),
       },
     ),
   }
