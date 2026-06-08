@@ -152,6 +152,23 @@ def cube_orientation_success_bonus(
   return command.at_goal
 
 
+def joint_pos_deviation_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Sum of squared joint deviations from the entity's default joint pose.
+
+  Used with a negative weight as a pose regularizer that pulls the hand back
+  toward its default ``init_state.joint_pos``. Unlike the ``mdp.posture`` exp
+  kernel, this penalty grows without bound -- which is exactly what's needed
+  to combat degenerate-pose collapse (flat fingers, single-finger grasps),
+  where the exp kernel saturates and provides no gradient back to home.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  err = (asset.data.joint_pos - asset.data.default_joint_pos)[:, asset_cfg.joint_ids]
+  return torch.sum(err**2, dim=-1)
+
+
 def cube_orientation_hold_progress(
   env: ManagerBasedRlEnv,
   command_name: str,

@@ -1,5 +1,6 @@
 """Base configuration for the in-hand cube reorientation task."""
 
+import math
 from pathlib import Path
 
 import mujoco
@@ -172,7 +173,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="cube",
       robot_name="robot",
       success_threshold=0.2,
-      success_hold_steps=5,
+      success_hold_steps=15,
+      success_resample_max_angle=math.pi / 3,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
@@ -224,6 +226,11 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "goal"},
     ),
     "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
+    "hand_pose": RewardTermCfg(
+      func=manipulation_mdp.joint_pos_deviation_l2,
+      weight=-0.05,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
+    ),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.005),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
