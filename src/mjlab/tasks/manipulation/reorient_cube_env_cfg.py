@@ -197,7 +197,14 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "reset_base": EventTermCfg(
       func=mdp.reset_root_state_uniform,
       mode="reset",
-      params={"pose_range": {}, "velocity_range": {}},
+      params={
+        # Pitch the palm slightly down at reset so the cube has a
+        # consistent "downhill" bias toward the palm cup. Pitch is
+        # rotation around the body Y axis -- with the palm-up base
+        # (R_y(-90)), negative pitch tips the fingertips down.
+        "pose_range": {"pitch": (-0.2, 0.0)},
+        "velocity_range": {},
+      },
     ),
     "reset_robot_joints": EventTermCfg(
       func=mdp.reset_joints_by_offset,
