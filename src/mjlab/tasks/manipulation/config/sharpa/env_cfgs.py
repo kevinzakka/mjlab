@@ -154,6 +154,17 @@ def sharpa_reorient_cube_env_cfg(
   cfg.observations["actor"].terms["cube_pos"].params["asset_cfg"].site_names = (
     PALM_SITE,
   )
+  # Cage (drop termination + escape penalty + viz): palm body is the frame,
+  # fingertips + wrist are the cage points, and the hand-base +x (palm normal) is
+  # the open up-axis the cube can lift along without penalty.
+  for cage_params in (
+    cfg.terminations["cube_dropped"].params,
+    cfg.rewards["cage_escape"].params,
+  ):
+    cage_params["asset_cfg"].body_names = (PALM_BODY,)
+    cage_params["asset_cfg"].site_names = (*FINGERTIP_SITES, PALM_SITE)
+    cage_params["up_axis"] = 0
+    cage_params["up_margin"] = 0.04
 
   # Fill per-robot fingertip sites into the fingertip observations.
   cfg.observations["actor"].terms["fingertip_to_cube"].params[

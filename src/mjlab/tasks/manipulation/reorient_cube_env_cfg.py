@@ -149,10 +149,22 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "goal"},
     ),
     "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
-    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
+    # Shaped anti-drop gradient: L1 distance the cube is outside the hand cage.
+    # The cage config (sites, up-axis) is filled in per-robot. The class term
+    # also draws the live cage in the viewer.
+    "cage_escape": RewardTermCfg(
+      func=manipulation_mdp.CageEscapePenalty,
+      weight=-3.0,
+      params={
+        "object_name": "cube",
+        "margin": 0.02,
+        "asset_cfg": SceneEntityCfg("robot", body_names=(), site_names=()),
+      },
+    ),
+    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.005),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.01,
+      weight=-0.005,
       params={
         "max_vel": 1.0,
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
@@ -162,13 +174,19 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
 
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    # Dynamic hand-cage drop: cube outside the palm-frame AABB of the fingertips
+    # + wrist for N steps. Robust to hand pitch, omnidirectional, and debounced.
+    # The palm body and cage sites are filled in per-robot.
     "cube_dropped": TerminationTermCfg(
-      func=manipulation_mdp.object_below_height,
-      params={"object_name": "cube", "minimum_height": 0.10},
-    ),
-    "cube_velocity": TerminationTermCfg(
-      func=manipulation_mdp.object_velocity_out_of_bounds,
-      params={"object_name": "cube", "max_lin_vel": 5.0, "max_ang_vel": 50.0},
+      func=manipulation_mdp.cage_drop,
+      params={
+        "object_name": "cube",
+        "margin": 0.02,
+        "max_outside_steps": 10,
+        "asset_cfg": SceneEntityCfg(
+          "robot", body_names=(), site_names=()
+        ),  # Set per-robot.
+      },
     ),
   }
 
