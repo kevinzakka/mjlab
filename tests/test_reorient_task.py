@@ -20,7 +20,7 @@ def test_sim_options() -> None:
   opt = cfg.sim.mujoco
   assert opt.timestep == 0.005
   assert opt.integrator == "implicitfast"
-  assert opt.cone == "elliptic"
+  assert opt.cone == "pyramidal"
   assert opt.impratio == 1
 
 

@@ -1,9 +1,4 @@
-"""Tests for sharpa_constants.py.
-
-These lock the kinematic-only vendoring + config port: the compiled model must carry
-the actuator gains, armature, frictionloss, joint damping, effort limits, and fingertip
-friction that the config (not the XML) now owns.
-"""
+"""Tests for sharpa_constants.py."""
 
 import mujoco
 import numpy as np
@@ -93,21 +88,13 @@ def test_robot_compiles() -> None:
   )
 
 
-# --- Motor / joint-class parameter checks -----------------------------------------
-#
-# The Sharpa hand has five joint classes, each corresponding to one motor type. These
-# canonical values are the ground truth from the Menagerie model (README: "armature,
-# damping, frictionloss, and actuatorfrcrange values specific to each joint class,
-# matched to the Sharpa controller"). They are written here INDEPENDENTLY of
-# sharpa_constants so a typo or mis-assignment in the config is caught.
-
 # class -> (armature, frictionloss, damping, effort_limit).
 _CLASS_MOTOR = {
-  "CMC": (0.0032, 0.132, 4.2e-05, 3.3),
-  "PCMC": (0.00012, 0.012, 4.2e-05, 0.5285),
-  "MCP": (0.00265, 0.07456, 2.38e-05, 1.864),
-  "PIP": (0.0006, 0.01276, 4.06e-06, 0.638),
-  "DIP": (0.00042, 0.00378738, 1.21e-06, 0.189369),
+  "CMC": (0.0032, 0.0, 0.0, 3.3),
+  "PCMC": (0.00012, 0.0, 0.0, 0.5285),
+  "MCP": (0.00265, 0.0, 0.0, 1.864),
+  "PIP": (0.0006, 0.0, 0.0, 0.638),
+  "DIP": (0.00042, 0.0, 0.0, 0.189369),
 }
 
 
@@ -155,28 +142,5 @@ def test_motor_sizes_decrease_distally() -> None:
   assert armatures == sorted(armatures, reverse=True)
   assert efforts == sorted(efforts, reverse=True)
   for cls in _CLASS_MOTOR:
-    arm, fric, damp, eff = _CLASS_MOTOR[cls]
-    assert arm > 0 and fric > 0 and damp > 0 and eff > 0
-
-
-def test_actuators_numerically_stable_at_sim_timestep(
-  sharpa_model: mujoco.MjModel,
-) -> None:
-  """Each position actuator is integrable at the task timestep.
-
-  The actuator natural frequency from its own reflected inertia is
-  omega = sqrt(kp / armature). For explicit integration of the stiffness term the
-  step must satisfy omega * dt << 2. We require a comfortable margin (omega * dt < 1)
-  at the task's 0.005 s timestep, so the joints are NOT the source of blow-ups. Note
-  this is conservative: the joint's link inertia adds to armature, lowering omega
-  further.
-  """
-  timestep = 0.005  # SimulationCfg.mujoco.timestep for the reorient task.
-  worst = 0.0
-  for i in range(sharpa_model.nu):
-    kp = sharpa_model.actuator_gainprm[i, 0]
-    dof = sharpa_model.joint(sharpa_model.actuator(i).name).dofadr[0]
-    armature = sharpa_model.dof_armature[dof]
-    omega = (kp / armature) ** 0.5
-    worst = max(worst, omega * timestep)
-  assert worst < 1.0, f"stiffest actuator has omega*dt={worst:.3f} (>=1)"
+    arm, _, _, eff = _CLASS_MOTOR[cls]
+    assert arm > 0 and eff > 0

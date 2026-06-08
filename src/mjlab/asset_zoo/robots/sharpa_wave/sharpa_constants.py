@@ -1,15 +1,4 @@
-"""Sharpa Wave hand constants.
-
-The vendored MJCF (``xmls/right_hand.xml``) is kinematic-only: the ``<option>`` block,
-the ``<actuator>`` block, and joint-level ``armature`` / ``frictionloss`` / ``damping``
-were stripped out and live here in config instead. Simulator options are set on the
-task's ``SimulationCfg``.
-
-The hand uses position actuators (kp/kv). ``kp`` is the per-joint stiffness from the
-Menagerie model; ``kv`` is the derivative gain that MuJoCo expanded from ``dampratio=0.9``
-(it folds in each joint's effective inertia, so it varies per joint). Both are ported
-verbatim so the compiled model matches the Menagerie hand; ``tests/asset_zoo`` locks this.
-"""
+"""Sharpa Wave hand constants."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,24 +35,33 @@ class _JointClass:
 
   armature: float
   frictionloss: float
-  damping: float  # Passive joint damping (separate from the actuator's kv).
-  effort_limit: float  # |actuatorfrcrange|.
+  damping: float
+  effort_limit: float
 
 
-_CMC = _JointClass(
-  armature=0.0032, frictionloss=0.132, damping=4.2e-05, effort_limit=3.3
-)
+# _CMC = _JointClass(
+#   armature=0.0032, frictionloss=0.132, damping=4.2e-05, effort_limit=3.3
+# )
+# _PCMC = _JointClass(
+#   armature=0.00012, frictionloss=0.012, damping=4.2e-05, effort_limit=0.5285
+# )
+# _MCP = _JointClass(
+#   armature=0.00265, frictionloss=0.07456, damping=2.38e-05, effort_limit=1.864
+# )
+# _PIP = _JointClass(
+#   armature=0.0006, frictionloss=0.01276, damping=4.06e-06, effort_limit=0.638
+# )
+# _DIP = _JointClass(
+#   armature=0.00042, frictionloss=0.00378738, damping=1.21e-06, effort_limit=0.189369
+# )
+_CMC = _JointClass(armature=0.0032, frictionloss=0.0, damping=0.0, effort_limit=3.3)
 _PCMC = _JointClass(
-  armature=0.00012, frictionloss=0.012, damping=4.2e-05, effort_limit=0.5285
+  armature=0.00012, frictionloss=0.0, damping=0.0, effort_limit=0.5285
 )
-_MCP = _JointClass(
-  armature=0.00265, frictionloss=0.07456, damping=2.38e-05, effort_limit=1.864
-)
-_PIP = _JointClass(
-  armature=0.0006, frictionloss=0.01276, damping=4.06e-06, effort_limit=0.638
-)
+_MCP = _JointClass(armature=0.00265, frictionloss=0.0, damping=0.0, effort_limit=1.864)
+_PIP = _JointClass(armature=0.0006, frictionloss=0.0, damping=0.0, effort_limit=0.638)
 _DIP = _JointClass(
-  armature=0.00042, frictionloss=0.00378738, damping=1.21e-06, effort_limit=0.189369
+  armature=0.00042, frictionloss=0.0, damping=0.0, effort_limit=0.189369
 )
 
 # Per joint: (stiffness kp, damping kv, joint class).

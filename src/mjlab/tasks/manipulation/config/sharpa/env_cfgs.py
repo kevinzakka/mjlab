@@ -1,12 +1,14 @@
 from dataclasses import replace
 
+from mjlab.asset_zoo.props.qwerty_cube import (
+  get_qwerty_cube_goal_marker_spec,
+  get_qwerty_cube_spec,
+)
 from mjlab.asset_zoo.robots.sharpa_wave import get_sharpa_right_cfg
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.manipulation.reorient_cube_env_cfg import (
-  get_goal_marker_spec,
-  get_reorient_cube_spec,
   make_reorient_cube_env_cfg,
 )
 
@@ -63,10 +65,10 @@ def sharpa_reorient_cube_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     robot_cfg.init_state, pos=HAND_POS, rot=HAND_ROT, joint_pos=HAND_HOME_JOINT_POS
   )
   cube_cfg = EntityCfg(
-    spec_fn=get_reorient_cube_spec,
+    spec_fn=get_qwerty_cube_spec,
     init_state=EntityCfg.InitialStateCfg(pos=CUBE_POS),
   )
-  goal_marker_cfg = EntityCfg(spec_fn=get_goal_marker_spec)
+  goal_marker_cfg = EntityCfg(spec_fn=get_qwerty_cube_goal_marker_spec)
   cfg.scene.entities = {
     "robot": robot_cfg,
     "cube": cube_cfg,

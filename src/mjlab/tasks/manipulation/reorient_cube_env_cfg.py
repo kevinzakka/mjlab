@@ -1,9 +1,6 @@
 """Base configuration for the in-hand cube reorientation task."""
 
-from pathlib import Path
-
-import mujoco
-
+from mjlab.asset_zoo.props.qwerty_cube import CUBE_HALF_EXTENT
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
@@ -20,81 +17,6 @@ from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
-
-CUBE_HALF_EXTENT = 0.0225
-
-_CUBE_TEXTURE_DIR = Path(__file__).parent / "assets" / "reorientation_cube_textures"
-
-# MjSpec cube-texture face order: right, left, up, down, front, back.
-_CUBE_FACES = ("right", "left", "up", "down", "front", "back")
-
-
-def _make_textured_cube_spec(
-  name: str,
-  size: float,
-  rgba: tuple[float, float, float, float],
-  *,
-  freejoint: bool,
-  collide: bool,
-  mass: float | None = None,
-) -> mujoco.MjSpec:
-  """Build a textured-cube MjSpec used by both the physical cube and goal marker."""
-  spec = mujoco.MjSpec()
-
-  spec.add_texture(
-    name=name,
-    type=mujoco.mjtTexture.mjTEXTURE_CUBE,
-    cubefiles=[str(_CUBE_TEXTURE_DIR / f"file{face}.png") for face in _CUBE_FACES],
-  )
-  mat = spec.add_material(name=name, rgba=rgba)
-  mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB.value] = name
-
-  body = spec.worldbody.add_body(name=name)
-  if freejoint:
-    body.add_freejoint(name=f"{name}_joint")
-  geom_kwargs: dict = dict(
-    name=f"{name}_geom",
-    type=mujoco.mjtGeom.mjGEOM_BOX,
-    size=(size, size, size),
-    material=name,
-  )
-  if collide:
-    assert mass is not None
-    geom_kwargs["mass"] = mass
-  else:
-    geom_kwargs.update(contype=0, conaffinity=0, density=0.0, group=2)
-  body.add_geom(**geom_kwargs)
-  return spec
-
-
-def get_reorient_cube_spec(
-  cube_size: float = CUBE_HALF_EXTENT,
-  mass: float = 0.15,
-) -> mujoco.MjSpec:
-  """Cube with a per-face texture so its orientation is readable in any viewer."""
-  return _make_textured_cube_spec(
-    "cube",
-    cube_size,
-    rgba=(1.0, 1.0, 1.0, 1.0),
-    freejoint=True,
-    collide=True,
-    mass=mass,
-  )
-
-
-def get_goal_marker_spec(cube_size: float = CUBE_HALF_EXTENT) -> mujoco.MjSpec:
-  """Visual-only translucent textured cube used as the goal marker.
-
-  Fixed-base (mjlab wraps it as a mocap body); the reorientation command writes its
-  pose each step to show the goal orientation above the hand.
-  """
-  return _make_textured_cube_spec(
-    "goal",
-    cube_size,
-    rgba=(1.0, 1.0, 1.0, 0.35),
-    freejoint=False,
-    collide=False,
-  )
 
 
 def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
@@ -274,10 +196,9 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       mujoco=MujocoCfg(
         timestep=0.005,
         integrator="implicitfast",
-        cone="elliptic",
+        cone="pyramidal",
         impratio=1,
-        solver="newton",
-        iterations=50,
+        iterations=10,
         ls_iterations=20,
       ),
     ),
