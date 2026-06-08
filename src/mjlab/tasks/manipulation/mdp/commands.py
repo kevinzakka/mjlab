@@ -9,7 +9,6 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
-  quat_box_plus,
   quat_error_magnitude,
   quat_from_euler_xyz,
   random_orientation,
@@ -280,13 +279,30 @@ class MultiCubeLiftingCommandCfg(CommandTermCfg):
 class ReorientationCommand(CommandTerm):
   """Goal orientation for in-hand cube reorientation.
 
-  Episode reset draws a uniformly random goal orientation (full SO(3)). After
-  every hold completion the goal's angular velocity is re-sampled to a random
-  axis at a random magnitude, then decays exponentially each step (the
-  mujoco_playground LEAP design). Between samples the goal smoothly rotates by
-  integrating that velocity, so the user sees a visible continuous reorientation
-  rather than a discrete jump, and the policy must track a moving target. A
-  translucent "ghost" cube is drawn above the hand at the goal orientation.
+  Episode reset draws a uniform-SO(3) goal. The goal is then static while the
+  policy reaches it; once the cube has been held within ``success_threshold``
+  for ``success_hold_steps`` consecutive control steps, the command enters a
+  SUCCESS_WINDOW phase where the goal stays put for ``success_dwell_steps``
+  more steps (so the dense hold-progress reward keeps firing and the achieved
+  goal stays visibly fixed). When the dwell expires the goal jumps to a fresh
+  uniform-SO(3) sample and the cycle repeats.
+
+  State machine, per env:
+
+    APPROACHING (in_dwell=False):
+      hold_counter increments while within_threshold, resets on exit.
+      at_goal pulses to 1 on the step hold_counter reaches success_hold_steps.
+      -> on that step, success_count++, dwell_counter=0, in_dwell=True.
+
+    SUCCESS_WINDOW (in_dwell=True):
+      goal is static; dwell_counter increments each step.
+      hold_counter continues to track within_threshold (so the hold_progress
+      reward keeps firing while the cube stays near the goal during dwell).
+      at_goal stays 0 -- it only ever pulses on the entry transition.
+      -> when dwell_counter reaches success_dwell_steps: sample fresh goal,
+         reset hold_counter and dwell_counter, in_dwell=False.
+
+  A translucent "ghost" cube is drawn above the hand at the goal orientation.
   """
 
   cfg: ReorientationCommandCfg
@@ -300,22 +316,24 @@ class ReorientationCommand(CommandTerm):
       env.scene[cfg.marker_name] if cfg.marker_name is not None else None
     )
     self._marker_offset = torch.tensor(cfg.viz.offset, device=self.device)
-    self._dt = float(env.step_dt)
     # write_mocap_pose's "all envs" path (env_ids=None) collapses the mocap dim
     # and breaks the broadcast, so we always pass an explicit env-ids tensor.
     self._all_env_ids = torch.arange(self.num_envs, device=self.device)
 
     self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
     self.goal_quat[:, 0] = 1.0
-    # Per-env axis-angle angular velocity of the goal (rad/s). Re-sampled on
-    # hold completion, decays each step in _update_command.
-    self.goal_ang_vel = torch.zeros(self.num_envs, 3, device=self.device)
-    # Cached each step in _update_metrics, before any resample-on-success.
+    # Cached each step in _update_metrics, before any state-machine transitions.
     self.orientation_error = torch.zeros(self.num_envs, device=self.device)
     self.within_threshold = torch.zeros(self.num_envs, device=self.device)
     self.hold_counter = torch.zeros(
       self.num_envs, dtype=torch.int32, device=self.device
     )
+    self.dwell_counter = torch.zeros(
+      self.num_envs, dtype=torch.int32, device=self.device
+    )
+    self.in_dwell = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+    # at_goal pulses 1 on the step the hold completes (entering SUCCESS_WINDOW);
+    # consumers reading it that step still see the success before resampling.
     self.at_goal = torch.zeros(self.num_envs, device=self.device)
     self.success_count = torch.zeros(self.num_envs, device=self.device)
     self.episode_success = torch.zeros(self.num_envs, device=self.device)
@@ -344,7 +362,10 @@ class ReorientationCommand(CommandTerm):
     self.hold_counter = torch.where(
       within, self.hold_counter + 1, torch.zeros_like(self.hold_counter)
     )
-    self.at_goal = (self.hold_counter >= self.cfg.success_hold_steps).float()
+    # at_goal pulses only on the step hold completes AND we're not already in
+    # the dwell phase -- so each success cycle generates exactly one pulse.
+    just_completed_hold = self.hold_counter >= self.cfg.success_hold_steps
+    self.at_goal = (just_completed_hold & ~self.in_dwell).float()
     self.episode_success = torch.maximum(self.episode_success, self.at_goal)
 
     self.metrics["orientation_error"] = self.orientation_error
@@ -356,17 +377,8 @@ class ReorientationCommand(CommandTerm):
   def _sample_goal(self, env_ids: torch.Tensor) -> None:
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
     self.hold_counter[env_ids] = 0
-    self.goal_ang_vel[env_ids] = 0.0
-
-  def _sample_goal_ang_vel(self, env_ids: torch.Tensor) -> None:
-    # Random axis on S^2, magnitude uniform in [goal_ang_vel_min, goal_ang_vel_max].
-    n = len(env_ids)
-    axis = torch.randn(n, 3, device=self.device)
-    axis = axis / axis.norm(dim=-1, keepdim=True).clamp_min(1e-9)
-    mag = self.cfg.goal_ang_vel_min + (
-      self.cfg.goal_ang_vel_max - self.cfg.goal_ang_vel_min
-    ) * torch.rand(n, device=self.device)
-    self.goal_ang_vel[env_ids] = axis * mag.unsqueeze(-1)
+    self.dwell_counter[env_ids] = 0
+    self.in_dwell[env_ids] = False
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     # Episode reset (and timer fallback): fresh full-SO(3) goal, clear episode trackers.
@@ -375,23 +387,24 @@ class ReorientationCommand(CommandTerm):
     self._sample_goal(env_ids)
 
   def _update_command(self) -> None:
-    # On hold completion: re-sample the goal's angular velocity so it starts
-    # rotating again. The goal isn't teleported; it continues smoothly from
-    # wherever it currently is, with a new direction and speed.
-    success_ids = self.at_goal.nonzero().flatten()
-    if len(success_ids) > 0:
-      self.success_count[success_ids] += 1.0
-      self._sample_goal_ang_vel(success_ids)
-      self.hold_counter[success_ids] = 0
+    # 1. Enter SUCCESS_WINDOW for envs that just completed a hold.
+    enter_dwell = self.at_goal.bool()
+    if enter_dwell.any():
+      self.success_count[enter_dwell] += 1.0
+      self.in_dwell[enter_dwell] = True
+      self.dwell_counter[enter_dwell] = 0
 
-    # Integrate goal by current angular velocity (axis-angle delta = omega * dt),
-    # then exponentially decay the velocity. After a few hundred ms the goal
-    # settles enough that the policy can catch it and complete the next hold.
-    delta = self.goal_ang_vel * self._dt
-    self.goal_quat = quat_box_plus(self.goal_quat, delta)
-    self.goal_ang_vel *= self.cfg.goal_ang_vel_decay
+    # 2. Advance the dwell counter on envs currently in SUCCESS_WINDOW.
+    self.dwell_counter = torch.where(
+      self.in_dwell, self.dwell_counter + 1, self.dwell_counter
+    )
 
-    # Pose the textured goal-marker cube above the hand at the goal orientation.
+    # 3. Exit SUCCESS_WINDOW (sample new goal) when dwell completes.
+    exit_dwell = self.in_dwell & (self.dwell_counter >= self.cfg.success_dwell_steps)
+    if exit_dwell.any():
+      self._sample_goal(exit_dwell.nonzero().flatten())
+
+    # 4. Pose the textured goal-marker cube above the hand at the goal orientation.
     if self.marker is not None:
       pos = self.robot.data.root_link_pos_w + self._marker_offset
       pose = torch.cat([pos, self.goal_quat], dim=-1)
@@ -410,18 +423,12 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_threshold: float = 0.1
   """Orientation error (radians) below which a step counts as in-threshold."""
   success_hold_steps: int = 5
-  """Consecutive in-threshold steps required before the goal counts as reached.
-  Setting to 1 recovers the old single-step success criterion."""
-  goal_ang_vel_min: float = 3.0
-  """Minimum goal angular-velocity magnitude (rad/s) sampled on hold completion."""
-  goal_ang_vel_max: float = 8.0
-  """Maximum goal angular-velocity magnitude (rad/s) sampled on hold completion."""
-  goal_ang_vel_decay: float = 0.93
-  """Per-control-step multiplicative decay of the goal angular velocity.
-  At ~50 Hz control this gives a ~0.28 s e-folding time. Average per-cycle
-  angular displacement is ~95 deg with peak speed ~460 deg/s -- visible
-  rotation that settles fast enough for the policy to catch the goal and
-  start the next hold."""
+  """Consecutive in-threshold steps required before the goal counts as reached
+  (transitions APPROACHING -> SUCCESS_WINDOW). Setting to 1 recovers the old
+  single-step success criterion."""
+  success_dwell_steps: int = 20
+  """Steps to stay in SUCCESS_WINDOW (goal static, hold-progress reward still
+  firing) before sampling a fresh uniform-SO(3) goal."""
 
   @dataclass
   class VizCfg:
