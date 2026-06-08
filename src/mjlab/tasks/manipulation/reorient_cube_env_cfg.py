@@ -172,7 +172,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="cube",
       robot_name="robot",
       success_threshold=0.2,
-      success_hold_steps=15,
+      success_hold_steps=10,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
