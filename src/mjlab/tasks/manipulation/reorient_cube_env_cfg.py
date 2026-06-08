@@ -60,7 +60,20 @@ def _make_textured_cube_spec(
   )
   if collide:
     assert mass is not None
-    geom_kwargs["mass"] = mass
+    # Steady-state penetration scales as timeconst^2 * (1 - dwidth) (MuJoCo
+    # Modeling chapter, Solver parameters). Default solref=(0.02, 1) and
+    # solimp dwidth=0.95 lets fingers visibly sink into the cube. Tighten both:
+    # - timeconst 0.02 -> 0.01 (= 2 * sim timestep of 0.005, the stability
+    #   floor MuJoCo enforces via refsafe): ~4x less penetration.
+    # - dwidth 0.95 -> 0.99: another ~5x via the (1 - d) term.
+    # Combined ~20x reduction. priority=1 ensures these tighter values win
+    # over the fingertip geoms' defaults in the contact-pair mixing rules.
+    geom_kwargs.update(
+      mass=mass,
+      solref=(0.01, 1.0),
+      solimp=(0.95, 0.99, 0.001, 0.5, 2),
+      priority=1,
+    )
   else:
     geom_kwargs.update(contype=0, conaffinity=0, density=0.0, group=2)
   body.add_geom(**geom_kwargs)
