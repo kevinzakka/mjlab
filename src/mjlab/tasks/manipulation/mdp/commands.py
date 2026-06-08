@@ -280,11 +280,13 @@ class MultiCubeLiftingCommandCfg(CommandTermCfg):
 class ReorientationCommand(CommandTerm):
   """Goal orientation for in-hand cube reorientation.
 
-  Samples a uniformly random goal orientation (full SO(3)) at episode reset and
-  resamples once the cube has been held within ``success_threshold`` for
-  ``success_hold_steps`` consecutive steps. The cube itself is reset by an event;
-  this term only manages the goal. A translucent "ghost" cube is drawn above the
-  hand at the goal orientation.
+  Episode reset draws a uniformly random goal orientation (full SO(3)). After
+  every hold completion the goal's angular velocity is re-sampled to a random
+  axis at a random magnitude, then decays exponentially each step (the
+  mujoco_playground LEAP design). Between samples the goal smoothly rotates by
+  integrating that velocity, so the user sees a visible continuous reorientation
+  rather than a discrete jump, and the policy must track a moving target. A
+  translucent "ghost" cube is drawn above the hand at the goal orientation.
   """
 
   cfg: ReorientationCommandCfg
@@ -298,12 +300,16 @@ class ReorientationCommand(CommandTerm):
       env.scene[cfg.marker_name] if cfg.marker_name is not None else None
     )
     self._marker_offset = torch.tensor(cfg.viz.offset, device=self.device)
+    self._dt = float(env.step_dt)
     # write_mocap_pose's "all envs" path (env_ids=None) collapses the mocap dim
     # and breaks the broadcast, so we always pass an explicit env-ids tensor.
     self._all_env_ids = torch.arange(self.num_envs, device=self.device)
 
     self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
     self.goal_quat[:, 0] = 1.0
+    # Per-env axis-angle angular velocity of the goal (rad/s). Re-sampled on
+    # hold completion, decays each step in _update_command.
+    self.goal_ang_vel = torch.zeros(self.num_envs, 3, device=self.device)
     # Cached each step in _update_metrics, before any resample-on-success.
     self.orientation_error = torch.zeros(self.num_envs, device=self.device)
     self.within_threshold = torch.zeros(self.num_envs, device=self.device)
@@ -350,19 +356,17 @@ class ReorientationCommand(CommandTerm):
   def _sample_goal(self, env_ids: torch.Tensor) -> None:
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
     self.hold_counter[env_ids] = 0
+    self.goal_ang_vel[env_ids] = 0.0
 
-  def _perturb_goal(self, env_ids: torch.Tensor) -> None:
-    # Compose the current goal with a small random rotation: axis uniform on S^2,
-    # angle uniform in [0, success_resample_max_angle]. Bounds the angular distance
-    # between consecutive goals so chasing the next goal after a completed hold is
-    # cheap (~few control steps) instead of paying a full random-SO(3) chase tax.
+  def _sample_goal_ang_vel(self, env_ids: torch.Tensor) -> None:
+    # Random axis on S^2, magnitude uniform in [goal_ang_vel_min, goal_ang_vel_max].
     n = len(env_ids)
     axis = torch.randn(n, 3, device=self.device)
     axis = axis / axis.norm(dim=-1, keepdim=True).clamp_min(1e-9)
-    angle = torch.rand(n, device=self.device) * self.cfg.success_resample_max_angle
-    delta = axis * angle.unsqueeze(-1)
-    self.goal_quat[env_ids] = quat_box_plus(self.goal_quat[env_ids], delta)
-    self.hold_counter[env_ids] = 0
+    mag = self.cfg.goal_ang_vel_min + (
+      self.cfg.goal_ang_vel_max - self.cfg.goal_ang_vel_min
+    ) * torch.rand(n, device=self.device)
+    self.goal_ang_vel[env_ids] = axis * mag.unsqueeze(-1)
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     # Episode reset (and timer fallback): fresh full-SO(3) goal, clear episode trackers.
@@ -371,14 +375,21 @@ class ReorientationCommand(CommandTerm):
     self._sample_goal(env_ids)
 
   def _update_command(self) -> None:
-    # On hold completion: sample a small perturbation of the current goal rather
-    # than a fresh full-SO(3) draw, so the chase to the next goal is short and
-    # the policy can keep chaining successes (the new goal is at most
-    # success_resample_max_angle away from the just-achieved one).
+    # On hold completion: re-sample the goal's angular velocity so it starts
+    # rotating again. The goal isn't teleported; it continues smoothly from
+    # wherever it currently is, with a new direction and speed.
     success_ids = self.at_goal.nonzero().flatten()
     if len(success_ids) > 0:
       self.success_count[success_ids] += 1.0
-      self._perturb_goal(success_ids)
+      self._sample_goal_ang_vel(success_ids)
+      self.hold_counter[success_ids] = 0
+
+    # Integrate goal by current angular velocity (axis-angle delta = omega * dt),
+    # then exponentially decay the velocity. After a few hundred ms the goal
+    # settles enough that the policy can catch it and complete the next hold.
+    delta = self.goal_ang_vel * self._dt
+    self.goal_quat = quat_box_plus(self.goal_quat, delta)
+    self.goal_ang_vel *= self.cfg.goal_ang_vel_decay
 
     # Pose the textured goal-marker cube above the hand at the goal orientation.
     if self.marker is not None:
@@ -401,9 +412,15 @@ class ReorientationCommandCfg(CommandTermCfg):
   success_hold_steps: int = 5
   """Consecutive in-threshold steps required before the goal counts as reached.
   Setting to 1 recovers the old single-step success criterion."""
-  success_resample_max_angle: float = math.pi / 4
-  """Maximum angular distance (radians) between the just-achieved goal and the
-  next one. Bounds the chase tax between consecutive goals."""
+  goal_ang_vel_min: float = 1.0
+  """Minimum goal angular-velocity magnitude (rad/s) sampled on hold completion."""
+  goal_ang_vel_max: float = 5.0
+  """Maximum goal angular-velocity magnitude (rad/s) sampled on hold completion."""
+  goal_ang_vel_decay: float = 0.92
+  """Per-control-step multiplicative decay of the goal angular velocity.
+  At ~50 Hz control this gives a ~0.25 s e-folding time, so the goal settles
+  within ~0.5 s of a hold completion -- enough for the policy to catch it
+  and start the next hold."""
 
   @dataclass
   class VizCfg:
