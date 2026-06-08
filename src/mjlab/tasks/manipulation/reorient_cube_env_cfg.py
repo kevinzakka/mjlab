@@ -72,6 +72,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "actions": ObservationTermCfg(func=mdp.last_action),
+    "prev_actions": ObservationTermCfg(func=mdp.second_last_action),
   }
 
   critic_terms = {**actor_terms}
@@ -135,12 +136,12 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "goal"},
     ),
     "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
       weight=-0.01,
       params={
-        "max_vel": 2.0,
+        "max_vel": 1.0,
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),

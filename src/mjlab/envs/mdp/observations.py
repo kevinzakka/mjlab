@@ -83,6 +83,16 @@ def last_action(env: ManagerBasedRlEnv, action_name: str | None = None) -> torch
   return env.action_manager.get_term(action_name).raw_action
 
 
+def second_last_action(env: ManagerBasedRlEnv) -> torch.Tensor:
+  """The action applied two steps ago (a_{t-2}).
+
+  Pair with :func:`last_action` (a_{t-1}) so that second-order action penalties
+  such as ``action_acc_l2`` (which depend on a_t, a_{t-1}, a_{t-2}) are a
+  function of observed state, i.e. Markovian from the policy's view.
+  """
+  return env.action_manager.prev_action
+
+
 ##
 # Commands.
 ##
