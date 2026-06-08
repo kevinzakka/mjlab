@@ -257,6 +257,86 @@ class RelativeJointPositionAction(BaseAction):
     self._entity.set_joint_position_target(target, joint_ids=self._target_ids)
 
 
+@dataclass(kw_only=True)
+class JointPositionOffsetEMAActionCfg(JointPositionActionCfg):
+  """Joint position control anchored at the default joint pose, with EMA smoothing.
+
+  Processing pipeline (per control step):
+
+    raw_target = default_joint_pos + clip(action, ±1) * scale
+    raw_target = clamp(raw_target, soft_lower_limit, soft_upper_limit)
+    target     = ema_alpha * raw_target + (1 - ema_alpha) * prev_target
+    if t < warmup_time_s: target = default_joint_pos
+
+  The default pose acts as a stable anchor (each action is a bounded perturbation
+  of a known-good configuration, not an integrator of prior commands), the EMA
+  filters out high-frequency policy jitter, and the warmup hold gives the policy
+  a quiet boot period before it starts driving the joints. Matches the action
+  processing used in wuji-mjlab for in-hand manipulation.
+
+  ``use_default_offset`` is forced True (the offset *is* the default pose) and
+  must not be overridden.
+  """
+
+  ema_alpha: float = 0.5
+  """EMA blend factor for target smoothing. 1.0 disables smoothing."""
+
+  warmup_time_s: float = 0.0
+  """Episode time during which the target is held at ``default_joint_pos``."""
+
+  def __post_init__(self):
+    super().__post_init__()
+    self.use_default_offset = True
+
+  def build(self, env: ManagerBasedRlEnv) -> JointPositionOffsetEMAAction:
+    return JointPositionOffsetEMAAction(self, env)
+
+
+class JointPositionOffsetEMAAction(JointPositionAction):
+  """See ``JointPositionOffsetEMAActionCfg``."""
+
+  def __init__(self, cfg: JointPositionOffsetEMAActionCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg=cfg, env=env)
+
+    # use_default_offset=True is enforced in cfg.__post_init__, so
+    # JointPositionAction.__init__ replaces self._offset with the per-env
+    # default-joint-pos tensor. Re-bind to a typed attribute to make the
+    # tensor-ness explicit for downstream tensor ops (clone, fancy-indexing).
+    assert isinstance(self._offset, torch.Tensor)
+    self._offset: torch.Tensor = self._offset
+
+    # Soft joint limits for hard clamping after the offset-and-scale.
+    soft = self._entity.data.soft_joint_pos_limits[:, self._target_ids]
+    self._lower_limit = soft[..., 0]
+    self._upper_limit = soft[..., 1]
+
+    self._prev_target = self._offset.clone()
+    self._ema_alpha = float(cfg.ema_alpha)
+    self._warmup_steps = int(round(cfg.warmup_time_s / float(env.step_dt)))
+
+  def process_actions(self, actions: torch.Tensor) -> None:
+    self._raw_actions[:] = actions
+    clamped = torch.clamp(actions, -1.0, 1.0)
+    raw_target = self._offset + clamped * self._scale
+    raw_target = torch.clamp(raw_target, self._lower_limit, self._upper_limit)
+    smoothed = (
+      self._ema_alpha * raw_target + (1.0 - self._ema_alpha) * self._prev_target
+    )
+    if self._warmup_steps > 0:
+      in_warmup = (self._env.episode_length_buf < self._warmup_steps).unsqueeze(-1)
+      smoothed = torch.where(in_warmup, self._offset, smoothed)
+    self._processed_actions = smoothed
+    self._prev_target = smoothed.clone()
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    super().reset(env_ids)
+    # Reset EMA state so the first post-reset target starts from the default pose.
+    if env_ids is None or isinstance(env_ids, slice):
+      self._prev_target = self._offset.clone()
+    else:
+      self._prev_target[env_ids] = self._offset[env_ids]
+
+
 class JointVelocityAction(BaseAction):
   """Control joints via velocity targets."""
 

@@ -4,6 +4,12 @@ from mjlab.envs.mdp.actions.actions import JointPositionAction as JointPositionA
 from mjlab.envs.mdp.actions.actions import (
   JointPositionActionCfg as JointPositionActionCfg,
 )
+from mjlab.envs.mdp.actions.actions import (
+  JointPositionOffsetEMAAction as JointPositionOffsetEMAAction,
+)
+from mjlab.envs.mdp.actions.actions import (
+  JointPositionOffsetEMAActionCfg as JointPositionOffsetEMAActionCfg,
+)
 from mjlab.envs.mdp.actions.actions import JointVelocityAction as JointVelocityAction
 from mjlab.envs.mdp.actions.actions import (
   JointVelocityActionCfg as JointVelocityActionCfg,

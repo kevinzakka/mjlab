@@ -5,7 +5,7 @@ from pathlib import Path
 import mujoco
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
+from mjlab.envs.mdp.actions import JointPositionOffsetEMAActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -160,10 +160,12 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   actions: dict[str, ActionTermCfg] = {
-    "joint_pos": RelativeJointPositionActionCfg(
+    "joint_pos": JointPositionOffsetEMAActionCfg(
       entity_name="robot",
       actuator_names=(".*",),
-      scale=0.1,
+      scale=0.5,
+      ema_alpha=0.5,
+      warmup_time_s=0.4,
     )
   }
 

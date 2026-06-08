@@ -12,9 +12,8 @@ def sharpa_reorient_cube_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       activation="elu",
       obs_normalization=True,
       distribution_cfg={
-        "class_name": "GaussianDistribution",
-        "init_std": 1.0,
-        "std_type": "scalar",
+        "class_name": "BetaDistribution",
+        "action_range": (-1.0, 1.0),
       },
     ),
     critic=RslRlModelCfg(
