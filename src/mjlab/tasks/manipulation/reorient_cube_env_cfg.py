@@ -183,7 +183,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", body_names=(), site_names=()),
       },
     ),
-    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.005),
+    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
     "joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
       weight=-0.005,
@@ -228,6 +228,9 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       num_envs=1,
       env_spacing=1.0,
       extent=0.3,
+      # Shrink decoration scale (force/contact arrow width, frames) for this small
+      # hand. Mean body size is ~3 cm; 1 cm keeps decorations readable, not bulky.
+      meansize=0.01,
     ),
     observations=observations,
     actions=actions,

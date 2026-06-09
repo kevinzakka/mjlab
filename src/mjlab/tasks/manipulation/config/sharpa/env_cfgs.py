@@ -117,6 +117,11 @@ def _make_sampling_viz_spec_fn(
       group=5,
       rgba=(0.2, 0.8, 0.2, 0.25),
     )
+    # Contact-force arrow length is force * map.force / meanmass. This is a tiny,
+    # light model (meanmass ~58 g), so the default map.force (0.005) renders grip
+    # forces as arrows several times the cube size. Shrink the force->length gain
+    # so the arrows read at hand scale (meansize handles their width).
+    spec.visual.map.force = 0.001
 
   return spec_fn
 

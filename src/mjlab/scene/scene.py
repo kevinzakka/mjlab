@@ -44,6 +44,11 @@ class SceneCfg:
   """Override for ``mjModel.stat.extent``. If ``None``, MuJoCo computes
   it automatically."""
 
+  meansize: float | None = None
+  """Override for ``mjModel.stat.meansize``, the characteristic length MuJoCo
+  uses to scale rendered decorations (force/contact arrow width, joint and frame
+  sizes, etc.). If ``None``, MuJoCo computes it as the mean body size."""
+
   spec_fn: Callable[[mujoco.MjSpec], None] | None = None
   """Optional callback to modify the ``MjSpec`` after entities and sensors
   have been added but before compilation."""
@@ -62,6 +67,8 @@ class Scene:
     self._spec = mujoco.MjSpec.from_file(str(_SCENE_XML))
     if self._cfg.extent is not None:
       self._spec.stat.extent = self._cfg.extent
+    if self._cfg.meansize is not None:
+      self._spec.stat.meansize = self._cfg.meansize
     self._add_terrain()
     self._add_entities()
     self._add_sensors()
