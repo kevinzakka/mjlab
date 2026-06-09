@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, cast
 import torch
 
 from mjlab.entity import Entity
+from mjlab.managers.manager_base import ManagerTermBase
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
 from mjlab.tasks.manipulation.mdp.commands import (
@@ -193,6 +195,65 @@ def cube_orientation_success_bonus(
   command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
   gate = _alive_gate(env, gate_object_name, gate_min_height)
   return command.at_goal if gate is None else command.at_goal * gate
+
+
+def sustained_hold(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  saturation_steps: float = 300.0,
+  gate_object_name: str | None = None,
+  gate_min_height: float = 0.1,
+) -> torch.Tensor:
+  """Dense, monotonic hold reward in [0, 1].
+
+  Grows with the cumulative number of in-threshold steps this episode. That count
+  only increases -- it pauses (never resets) when the goal advances -- so the
+  reward is always up-or-flat and never dips at a goal switch, which would
+  otherwise teach the policy that completing a hold is followed by a reward
+  collapse. Saturates at 1 after ``saturation_steps`` total in-threshold steps.
+  Replaces the sparse success bonus with a dense "reach and keep the pose" signal.
+
+  If ``gate_object_name`` is set, the reward is multiplicatively gated by whether
+  that object's root z is above ``gate_min_height`` (the ``cube_held`` gate).
+  """
+  command = cast(ReorientationCommand, env.command_manager.get_term(command_name))
+  reward = (command.cumulative_hold / saturation_steps).clamp(max=1.0)
+  gate = _alive_gate(env, gate_object_name, gate_min_height)
+  return reward if gate is None else reward * gate
+
+
+class NormalizedJointTorquePenalty(ManagerTermBase):
+  """Effort penalty as the sum of squared torque fractions: ``sum((tau/tau_max)^2)``.
+
+  Each joint is normalized by its own effort limit (which spans ~17x across this
+  hand, CMC 3.3 N*m vs DIP 0.19 N*m), so the penalty is a dimensionless "fraction
+  of capacity used" and a small distal joint at 90% of its limit costs the same as
+  a big proximal one -- unlike a raw ``sum(tau^2)``, which the large joints
+  dominate. ``tau_max`` is read once from the compiled model's actuator force range.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv) -> None:
+    super().__init__(env)
+    asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+    self._asset: Entity = env.scene[asset_cfg.name]
+    self._act_ids = asset_cfg.actuator_ids
+    # actuator_forcerange[:, 1] is +effort_limit per actuator. The robot is the
+    # only actuated entity, so the entity-local actuator ids line up with the host
+    # model's global actuator order.
+    forcerange = torch.as_tensor(
+      env.sim.mj_model.actuator_forcerange[:, 1],
+      device=env.device,
+      dtype=torch.float32,
+    )
+    tau_max = (
+      forcerange if isinstance(self._act_ids, slice) else forcerange[self._act_ids]
+    )
+    self._tau_max = tau_max.clamp_min(1e-3)
+
+  def __call__(self, env: ManagerBasedRlEnv, **kwargs) -> torch.Tensor:
+    del env, kwargs  # asset/limits resolved at init.
+    tau = self._asset.data.actuator_force[:, self._act_ids]
+    return torch.sum(torch.square(tau / self._tau_max), dim=-1)
 
 
 def cube_rotation_toward_goal(

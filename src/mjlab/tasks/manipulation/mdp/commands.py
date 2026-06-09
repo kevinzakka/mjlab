@@ -322,6 +322,10 @@ class ReorientationCommand(CommandTerm):
     self.window_timer = torch.zeros(
       self.num_envs, dtype=torch.int32, device=self.device
     )
+    # Cumulative in-threshold steps this episode. Only grows (resets on episode
+    # reset, never on a goal switch), so a reward built from it is monotonic and
+    # never dips when the goal advances.
+    self.cumulative_hold = torch.zeros(self.num_envs, device=self.device)
 
     self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["within_threshold"] = torch.zeros(self.num_envs, device=self.device)
@@ -330,6 +334,7 @@ class ReorientationCommand(CommandTerm):
     self.metrics["episode_success"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["in_success_window"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["window_timer"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["cumulative_hold"] = torch.zeros(self.num_envs, device=self.device)
 
   @property
   def command(self) -> torch.Tensor:
@@ -344,6 +349,7 @@ class ReorientationCommand(CommandTerm):
     )
     within = self.orientation_error < self.cfg.success_threshold
     self.within_threshold = within.float()
+    self.cumulative_hold = self.cumulative_hold + self.within_threshold
 
     # Approaching phase (not yet in the success window): hold within threshold to
     # complete a success. ``at_goal`` is a one-shot pulse on the completing step.
@@ -373,6 +379,7 @@ class ReorientationCommand(CommandTerm):
     self.metrics["episode_success"] = self.episode_success
     self.metrics["in_success_window"] = self.in_success_window.float()
     self.metrics["window_timer"] = self.window_timer.float()
+    self.metrics["cumulative_hold"] = self.cumulative_hold
 
   def _sample_goal(self, env_ids: torch.Tensor) -> None:
     self.goal_quat[env_ids] = random_orientation(len(env_ids), device=str(self.device))
@@ -395,6 +402,7 @@ class ReorientationCommand(CommandTerm):
     # Episode reset (and timer fallback): fresh full-SO(3) goal, clear episode trackers.
     self.episode_success[env_ids] = 0.0
     self.success_count[env_ids] = 0.0
+    self.cumulative_hold[env_ids] = 0.0
     self.in_success_window[env_ids] = False
     self.window_timer[env_ids] = 0
     self._sample_goal(env_ids)

@@ -153,10 +153,15 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,
       params={"command_name": "goal", **_HELD_GATE},
     ),
-    "success_bonus": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_success_bonus,
+    # Dense, monotonic "reach and keep the pose" reward: grows with cumulative
+    # in-threshold time (never dips at a goal switch), saturating at 1. Replaces a
+    # sparse success bonus.
+    "sustained_hold": RewardTermCfg(
+      func=manipulation_mdp.sustained_hold,
       weight=2.0,
-      params={"command_name": "goal", **_HELD_GATE},
+      # ~one episode of in-threshold time to reach full reward, so a good policy
+      # keeps earning marginal reward for holding longer instead of saturating early.
+      params={"command_name": "goal", "saturation_steps": 500.0, **_HELD_GATE},
     ),
     # Grasp-quality task rewards (bounded [0, 1], self-gating via contact): grip
     # with the fingertips and keep the cube off the palm.
@@ -192,10 +197,11 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
-    # Effort penalty: discourages huge actuator forces / squeezing the cube. Grows
-    # quadratically with force, so it bites hardest exactly when the hand crushes.
+    # Effort penalty: sum of squared per-joint torque fractions (tau/tau_max)^2, so
+    # each joint is penalized by how hard it works relative to its own limit rather
+    # than the big proximal joints dominating a raw sum of squares.
     "joint_torque": RewardTermCfg(
-      func=mdp.joint_torques_l2,
+      func=manipulation_mdp.NormalizedJointTorquePenalty,
       weight=-0.1,
       params={"asset_cfg": SceneEntityCfg("robot")},
     ),
