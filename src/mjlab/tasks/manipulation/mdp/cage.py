@@ -107,16 +107,21 @@ def cage_drop(
   up_axis: int | None = None,
   up_margin: float = 0.04,
   max_outside_steps: int = 10,
+  grace_steps: int = 0,
 ) -> torch.Tensor:
   """Terminate when the object stays outside the hand cage for N steps.
 
   The debounce counter increments each step the object is outside and resets to
   zero whenever it is inside. Reset is implicit: every episode reset nestles the
   object back in the cradle (inside the cage), so the counter zeroes on the next
-  step without an explicit reset hook.
+  step without an explicit reset hook. During the first ``grace_steps`` of an
+  episode the counter is held at zero, so the object can drop and settle into the
+  cage (e.g. during an action warmup) without false-terminating.
   """
   escape = cage_escape_distance(env, object_name, asset_cfg, margin, up_axis, up_margin)
   outside = escape > 0.0
+  if grace_steps > 0:
+    outside &= env.episode_length_buf >= grace_steps
 
   counter = getattr(env, _COUNTER_ATTR, None)
   if counter is None or counter.shape[0] != env.num_envs:

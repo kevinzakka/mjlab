@@ -43,7 +43,7 @@ HAND_ROT = (0.70710678, 0.0, -0.70710678, 0.0)
 
 # Cube cradle, expressed relative to the hand base: center of the cup, between the palm
 # and the curled fingertips.
-CRADLE_LOCAL = (-0.08, 0.0, 0.052)
+CRADLE_LOCAL = (-0.09, 0.0, 0.052)
 CUBE_POS = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + HAND_POS[2])
 # Goal ghost sits above the cradled cube (offset is relative to the hand base).
 GHOST_OFFSET = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + 0.13)
@@ -62,7 +62,7 @@ def _world_to_body(
 
 # Spawn the cube lifted along the palm normal so SO(3) corner-down orientations
 # drop into the cup instead of penetrating it (corner reaches ~1.65 cm deeper).
-CUBE_RESET_LIFT = 0.015
+CUBE_RESET_LIFT = 0.055
 _cradle_b = _world_to_body(
   tuple(c - h for c, h in zip(CUBE_POS, HAND_POS, strict=True)), HAND_ROT
 )
@@ -70,16 +70,6 @@ _up_b = _world_to_body((0.0, 0.0, 1.0), HAND_ROT)
 CRADLE_OFFSET_B = tuple(
   o + CUBE_RESET_LIFT * u for o, u in zip(_cradle_b, _up_b, strict=True)
 )
-
-HAND_HOME_JOINT_POS = {
-  "right_thumb_CMC_AA": 0.25,
-  "right_thumb_CMC_FE": -0.55,
-  "right_thumb_IP": -0.55,
-  ".*_MCP_FE": -0.41,
-  ".*_PIP": -0.58,
-  ".*_DIP": -0.44,
-  ".*": 0.0,
-}
 
 # Reset perturbation about the home grasp: a uniform offset added to the home pose
 # and clipped to joint limits. Flexion (curl) gets more range than abduction
@@ -137,9 +127,7 @@ def sharpa_reorient_cube_env_cfg(
   cfg = make_reorient_cube_env_cfg()
 
   robot_cfg = get_sharpa_right_cfg(use_mesh_collisions=use_mesh_collisions)
-  robot_cfg.init_state = replace(
-    robot_cfg.init_state, pos=HAND_POS, rot=HAND_ROT, joint_pos=HAND_HOME_JOINT_POS
-  )
+  robot_cfg.init_state = replace(robot_cfg.init_state, pos=HAND_POS, rot=HAND_ROT)
   cube_cfg = EntityCfg(
     spec_fn=get_qwerty_cube_spec,
     init_state=EntityCfg.InitialStateCfg(pos=CUBE_POS),

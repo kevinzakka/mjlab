@@ -133,10 +133,20 @@ SHARPA_COLLISION = CollisionCfg(
 # Initial state.
 ##
 
-# Neutral, open hand. The task env cfg sets the palm-up base orientation and the
-# grasp-ready home pose for cube reorientation.
-HOME = EntityCfg.InitialStateCfg(
-  joint_pos={".*": 0.0},
+# Caged grasp home: cupped fingers that hold the cube off the palm for the in-hand
+# reorientation task -- the hand's reset/reference pose. The task adds the palm-up
+# base orientation. Run this module (``python sharpa_constants.py``) to visualize
+# it. First-match-wins, so specific joints precede the general patterns.
+CAGED_HOME = EntityCfg.InitialStateCfg(
+  joint_pos={
+    "right_thumb_CMC_AA": 0.25,
+    "right_thumb_CMC_FE": -0.8,
+    "right_thumb_IP": -0.8,
+    ".*_MCP_FE": -0.66,
+    ".*_PIP": -0.85,
+    ".*_DIP": -0.7,
+    ".*": 0.0,
+  },
   joint_vel={".*": 0.0},
 )
 
@@ -154,7 +164,7 @@ def get_sharpa_right_cfg(
   use_mesh_collisions: bool = USE_MESH_COLLISIONS,
 ) -> EntityCfg:
   return EntityCfg(
-    init_state=HOME,
+    init_state=CAGED_HOME,
     spec_fn=partial(get_spec, use_mesh_collisions=use_mesh_collisions),
     collisions=(SHARPA_COLLISION,),
     articulation=ARTICULATION,
@@ -167,4 +177,8 @@ if __name__ == "__main__":
   from mjlab.entity.entity import Entity
 
   robot = Entity(get_sharpa_right_cfg())
-  viewer.launch(robot.spec.compile())
+  model = robot.spec.compile()
+  data = mujoco.MjData(model)
+  mujoco.mj_resetDataKeyframe(model, data, model.key("init_state").id)
+  mujoco.mj_forward(model, data)
+  viewer.launch(model, data)

@@ -236,6 +236,11 @@ class RelativeJointPositionActionCfg(BaseActionCfg):
   position.
   """
 
+  warmup_time_s: float = 0.0
+  """Episode time at the start of each episode during which the joints are held
+  at the default (home) pose instead of tracking the policy. Lets the object
+  drop and settle into the grasp before the policy starts acting."""
+
   def __post_init__(self):
     self.transmission_type = TransmissionType.JOINT
     if self.offset != 0.0:
@@ -251,9 +256,17 @@ class RelativeJointPositionActionCfg(BaseActionCfg):
 class RelativeJointPositionAction(BaseAction):
   """Control joints via position targets relative to current positions."""
 
+  def __init__(self, cfg: RelativeJointPositionActionCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg=cfg, env=env)
+    self._warmup_steps = int(round(cfg.warmup_time_s / float(env.step_dt)))
+
   def apply_actions(self) -> None:
     current_pos = self._entity.data.joint_pos[:, self._target_ids]
     target = current_pos + self._processed_actions
+    if self._warmup_steps > 0:
+      in_warmup = (self._env.episode_length_buf < self._warmup_steps).unsqueeze(-1)
+      home = self._entity.data.default_joint_pos[:, self._target_ids]
+      target = torch.where(in_warmup, home, target)
     self._entity.set_joint_position_target(target, joint_ids=self._target_ids)
 
 

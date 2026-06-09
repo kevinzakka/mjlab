@@ -100,6 +100,9 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="robot",
       actuator_names=(".*",),
       scale=0.1,
+      # Hold the home grasp for the first 0.4 s so the cube drops and settles
+      # into the cage before the policy starts acting.
+      warmup_time_s=0.4,
     )
   }
 
@@ -189,6 +192,13 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
+    # Effort penalty: discourages huge actuator forces / squeezing the cube. Grows
+    # quadratically with force, so it bites hardest exactly when the hand crushes.
+    "joint_torque": RewardTermCfg(
+      func=mdp.joint_torques_l2,
+      weight=-0.1,
+      params={"asset_cfg": SceneEntityCfg("robot")},
+    ),
   }
 
   terminations = {
@@ -202,6 +212,9 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "object_name": "cube",
         "margin": 0.02,
         "max_outside_steps": 10,
+        # Don't count drops during the 0.4 s (20-step) action warmup, while the
+        # cube is dropping and settling into the cage.
+        "grace_steps": 20,
         "asset_cfg": SceneEntityCfg(
           "robot", body_names=(), site_names=()
         ),  # Set per-robot.
