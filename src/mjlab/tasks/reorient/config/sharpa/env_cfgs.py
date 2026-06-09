@@ -18,6 +18,7 @@ from mjlab.tasks.reorient.mdp import ReorientationCommandCfg
 from mjlab.tasks.reorient.reorient_env_cfg import (
   make_reorient_cube_env_cfg,
 )
+from mjlab.utils.spec_config import CollisionCfg
 
 # Palm/wrist site used for the cube-relative observations and as a cage point for the
 # drop termination + escape penalty.
@@ -136,6 +137,19 @@ def sharpa_reorient_cube_env_cfg(
   cube_cfg = EntityCfg(
     spec_fn=get_qwerty_cube_spec,
     init_state=EntityCfg.InitialStateCfg(pos=CUBE_POS),
+    # Match the stiffened fingertip-pad solref/solimp (see SHARPA_COLLISION). With
+    # equal priority the finger<->cube contact is the 0.5 blend of pad and cube
+    # params; setting the cube identical to the pads makes that blend deterministic
+    # and as stiff as intended. disable_other_geoms=False so only the cube geom is
+    # touched (the cube spec has no other geoms, but this guards future ones).
+    collisions=(
+      CollisionCfg(
+        geom_names_expr=("cube_geom",),
+        solref={"cube_geom": (0.012, 1.0)},
+        solimp={"cube_geom": (0.95, 0.99, 0.0005, 0.5, 2.0)},
+        disable_other_geoms=False,
+      ),
+    ),
   )
   goal_marker_cfg = EntityCfg(spec_fn=get_qwerty_cube_goal_marker_spec)
   cfg.scene.entities = {

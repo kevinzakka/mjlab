@@ -123,9 +123,20 @@ SHARPA_COLLISION = CollisionCfg(
     ".*_pad_collision": (1.0,),
     ".*": (0.5,),
   },
+  # Stiffened fingertip pads. The pads are the soft half of the finger<->cube
+  # contact (stiffness ~ 1/timeconst^2), so they dominate grip penetration. With
+  # equal priority the contact uses the 0.5 blend of pad and cube params; the cube
+  # is set to the SAME solref/solimp (see the cube CollisionCfg in the sharpa env
+  # cfg) so the blend is deterministic. Tuned on the frozen ytflo6sj policy: this
+  # cuts finger<->cube p95 penetration ~8x (5.8 -> 0.7 mm) with no NaNs and no speed
+  # cost. timeconst 0.012 sits just above the 2*dt=0.01 floor (dt=0.005) for
+  # headroom; solimp d1=0.99 makes the contact near-rigid at full penetration.
   solref={
-    ".*_pad_collision": (0.06, 0.9),
+    ".*_pad_collision": (0.012, 1.0),
     ".*": (0.02, 1.0),
+  },
+  solimp={
+    ".*_pad_collision": (0.95, 0.99, 0.0005, 0.5, 2.0),
   },
 )
 
