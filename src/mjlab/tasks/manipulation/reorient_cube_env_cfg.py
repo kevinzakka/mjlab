@@ -118,7 +118,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       # Bounded (<=45 deg) perturbation of the held goal each switch: a built-in
       # curriculum that lets the policy chain reorientations. Flip to True for
       # full-SO(3) goals once the policy can chain.
-      success_resample_full_so3=False,
+      success_resample_full_so3=True,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
