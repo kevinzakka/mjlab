@@ -6,6 +6,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactSensor
 from mjlab.tasks.manipulation.mdp.commands import (
   LiftingCommand,
   MultiCubeLiftingCommand,
@@ -312,3 +313,36 @@ def joint_velocity_hinge_penalty(
   joint_vel = robot.data.joint_vel[:, asset_cfg.joint_ids]
   excess = (joint_vel.abs() - max_vel).clamp_min(0.0)
   return (excess**2).sum(dim=-1)
+
+
+def fingertip_object_contact(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+) -> torch.Tensor:
+  """Fraction of fingertips in contact with the object, in ``[0, 1]``.
+
+  Encourages a fingertip grasp. Reads a contact sensor whose primaries are the
+  fingertip pad geoms and whose secondary is the object.
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  found = sensor.data.found
+  assert found is not None
+  return (found > 0).float().mean(dim=-1)
+
+
+def cube_off_palm(
+  env: ManagerBasedRlEnv,
+  tip_sensor_name: str,
+  palm_sensor_name: str,
+) -> torch.Tensor:
+  """1.0 when the cube is held by the fingertips and clear of the palm, else 0.0.
+
+  Discourages the cube resting in the palm cup (a distal/fingertip grasp). Reads
+  a fingertip-object and a palm-object contact sensor.
+  """
+  tip = env.scene[tip_sensor_name].data.found
+  palm = env.scene[palm_sensor_name].data.found
+  assert tip is not None and palm is not None
+  tip_contact = (tip > 0).any(dim=-1)
+  palm_contact = (palm > 0).any(dim=-1)
+  return (tip_contact & ~palm_contact).float()

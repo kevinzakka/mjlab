@@ -143,6 +143,7 @@ class CageEscapePenalty(ManagerTermBase):
     self._margin: float = p.get("margin", 0.02)
     self._up_axis: int | None = p.get("up_axis", None)
     self._up_margin: float = p.get("up_margin", 0.04)
+    self._draw_cage: bool = p.get("draw_cage", False)
 
   def __call__(self, env: ManagerBasedRlEnv, **kwargs) -> torch.Tensor:
     return cage_escape_distance(
@@ -155,6 +156,8 @@ class CageEscapePenalty(ManagerTermBase):
     )
 
   def debug_vis(self, visualizer: DebugVisualizer) -> None:
+    if not self._draw_cage:  # off by default; set draw_cage=True to show the cage
+      return
     env = self._env
     robot: Entity = env.scene[self._asset_cfg.name]
     body_ids = self._asset_cfg.body_ids

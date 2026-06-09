@@ -13,6 +13,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import reset_joints_by_offset
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.manipulation.reorient_cube_env_cfg import (
   make_reorient_cube_env_cfg,
@@ -149,6 +150,23 @@ def sharpa_reorient_cube_env_cfg(
     "cube": cube_cfg,
     "goal_marker": goal_marker_cfg,
   }
+
+  # Contact sensors for the grasp-quality rewards: per-fingertip pad-vs-cube and
+  # palm-vs-cube contact.
+  cfg.scene.sensors = (
+    ContactSensorCfg(
+      name="tip_object_contact",
+      primary=ContactMatch(mode="geom", pattern=(".*_pad_collision",), entity="robot"),
+      secondary=ContactMatch(mode="body", pattern="cube", entity="cube"),
+      fields=("found",),
+    ),
+    ContactSensorCfg(
+      name="palm_object_contact",
+      primary=ContactMatch(mode="body", pattern=PALM_BODY, entity="robot"),
+      secondary=ContactMatch(mode="body", pattern="cube", entity="cube"),
+      fields=("found",),
+    ),
+  )
 
   # Fill per-robot palm site into the terms that need it.
   cfg.observations["actor"].terms["cube_pos"].params["asset_cfg"].site_names = (

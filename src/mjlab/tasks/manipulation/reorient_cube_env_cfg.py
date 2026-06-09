@@ -112,8 +112,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       success_hold_steps=13,
       # 50 control steps @ 50 Hz = 1.0 s, matching wuji's 20-step window @ 20 Hz.
       goal_switch_delay=50,
-      # Each new goal is a fresh full SO(3) reorientation, not a small perturbation.
-      success_resample_full_so3=True,
+      # Bounded (<=45 deg) perturbation of the held goal each switch: a built-in
+      # curriculum that lets the policy chain reorientations. Flip to True for
+      # full-SO(3) goals once the policy can chain.
+      success_resample_full_so3=False,
       resampling_time_range=(1.0e6, 1.0e6),
       debug_vis=True,
       viz=ReorientationCommandCfg.VizCfg(cube_half_extent=CUBE_HALF_EXTENT),
@@ -137,24 +139,41 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # groups are robot-specific).
   }
 
+  # Task rewards are bounded to [0, 1] and gated by "cube held" (zeroed when the
+  # cube has fallen), so a drop costs *lost reward* rather than a magic penalty.
+  # Costs are reserved for the genuinely unbounded regularizers (jerk, speed) plus
+  # a small cage-escape gradient.
+  _HELD_GATE = {"gate_object_name": "cube", "gate_min_height": 0.05}
   rewards = {
     "orientation_tolerance": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_tolerance,
-      weight=5.0,
-      params={"command_name": "goal"},
+      weight=1.0,
+      params={"command_name": "goal", **_HELD_GATE},
     ),
     "success_bonus": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_success_bonus,
-      weight=10.0,
-      params={"command_name": "goal"},
+      weight=2.0,
+      params={"command_name": "goal", **_HELD_GATE},
     ),
-    "drop_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-50.0),
-    # Shaped anti-drop gradient: L1 distance the cube is outside the hand cage.
-    # The cage config (sites, up-axis) is filled in per-robot. The class term
-    # also draws the live cage in the viewer.
+    # Grasp-quality task rewards (bounded [0, 1], self-gating via contact): grip
+    # with the fingertips and keep the cube off the palm.
+    "fingertip_contact": RewardTermCfg(
+      func=manipulation_mdp.fingertip_object_contact,
+      weight=0.5,
+      params={"sensor_name": "tip_object_contact"},
+    ),
+    "cube_off_palm": RewardTermCfg(
+      func=manipulation_mdp.cube_off_palm,
+      weight=0.5,
+      params={
+        "tip_sensor_name": "tip_object_contact",
+        "palm_sensor_name": "palm_object_contact",
+      },
+    ),
+    # Costs: unbounded regularizers + a small anti-drop gradient (escape distance).
     "cage_escape": RewardTermCfg(
       func=manipulation_mdp.CageEscapePenalty,
-      weight=-3.0,
+      weight=-1.0,
       params={
         "object_name": "cube",
         "margin": 0.02,
