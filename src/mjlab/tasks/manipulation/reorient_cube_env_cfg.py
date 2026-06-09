@@ -148,10 +148,28 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   # a small cage-escape gradient.
   _HELD_GATE = {"gate_object_name": "cube", "gate_min_height": 0.05}
   rewards = {
+    # Coarse kernel: flat inside the bound, gentle gradient over the whole range --
+    # pulls the cube in from a cold goal.
     "orientation_tolerance": RewardTermCfg(
       func=manipulation_mdp.cube_orientation_tolerance,
       weight=1.0,
       params={"command_name": "goal", **_HELD_GATE},
+    ),
+    # Precise kernel: a sharp ramp responsive only within ~0.4 rad of the goal (zero
+    # beyond, so it never touches the cold approach). Gives the steep last-mile
+    # gradient the flat coarse kernel lacks, so the policy is pulled to actually nail
+    # the pose instead of hovering just outside the success threshold. Rewards only
+    # *being close*, never the act of rotating, so it can't form a spinning optimum.
+    "orientation_precise": RewardTermCfg(
+      func=manipulation_mdp.cube_orientation_tolerance,
+      weight=1.0,
+      params={
+        "command_name": "goal",
+        "bound": 0.0,
+        "margin": 0.4,
+        "value_at_margin": 0.0,
+        **_HELD_GATE,
+      },
     ),
     # Dense, monotonic "reach and keep the pose" reward: grows with cumulative
     # in-threshold time (never dips at a goal switch), saturating at 1. Replaces a
