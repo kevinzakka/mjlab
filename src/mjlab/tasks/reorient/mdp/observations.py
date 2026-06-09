@@ -9,7 +9,6 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.reorient.mdp.commands import ReorientationCommand
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
-  quat_apply,
   quat_apply_inverse,
   quat_conjugate,
   quat_inv,
@@ -20,6 +19,17 @@ if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
+
+
+def _reorient_command(
+  env: ManagerBasedRlEnv, command_name: str
+) -> ReorientationCommand:
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ReorientationCommand):
+    raise TypeError(
+      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
+    )
+  return command
 
 
 def ee_to_object_distance(
@@ -33,9 +43,7 @@ def ee_to_object_distance(
   ee_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids].squeeze(1)
   obj_pos_w = obj.data.root_link_pos_w
   distance_vec_w = obj_pos_w - ee_pos_w
-  base_quat_w = robot.data.root_link_quat_w
-  distance_vec_b = quat_apply(quat_inv(base_quat_w), distance_vec_w)
-  return distance_vec_b
+  return quat_apply_inverse(robot.data.root_link_quat_w, distance_vec_w)
 
 
 def _quat_to_6d(quat: torch.Tensor) -> torch.Tensor:
@@ -72,11 +80,7 @@ def object_to_goal_orientation_6d(
   ``object_orientation_6d``) so all orientation observations share one frame and stay
   consistent if the hand mounting orientation ever changes.
   """
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ReorientationCommand):
-    raise TypeError(
-      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
-    )
+  command = _reorient_command(env, command_name)
   robot: Entity = env.scene[asset_cfg.name]
   obj: Entity = env.scene[object_name]
   base_inv = quat_inv(robot.data.root_link_quat_w)
@@ -96,11 +100,7 @@ def goal_hold_progress(
   the SUCCESS_WINDOW dwell, how stably it is staying in the threshold. 0 means
   it just lost the hold (or fresh goal); 1 means at or past the hold target.
   """
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ReorientationCommand):
-    raise TypeError(
-      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
-    )
+  command = _reorient_command(env, command_name)
   denom = max(command.cfg.success_hold_steps, 1)
   return (command.hold_counter.float() / denom).clamp(0.0, 1.0).unsqueeze(-1)
 
@@ -116,11 +116,7 @@ def goal_window_progress(
   success state machine, so the sparse success bonus and the goal-switch timing are
   observable (intended as a critic-only privileged term).
   """
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ReorientationCommand):
-    raise TypeError(
-      f"Command '{command_name}' must be a ReorientationCommand, got {type(command)}"
-    )
+  command = _reorient_command(env, command_name)
   denom = max(command.cfg.goal_switch_delay, 1)
   return (command.window_timer.float() / denom).clamp(0.0, 1.0).unsqueeze(-1)
 

@@ -21,11 +21,14 @@ if TYPE_CHECKING:
 class ReorientationCommand(CommandTerm):
   """Goal orientation for in-hand cube reorientation.
 
-  Samples a uniformly random goal orientation (full SO(3)) at episode reset and
-  resamples once the cube has been held within ``success_threshold`` for
-  ``success_hold_steps`` consecutive steps. The cube itself is reset by an event;
-  this term only manages the goal. A translucent "ghost" cube is drawn above the
-  hand at the goal orientation.
+  Episode reset draws a uniform-SO(3) goal. A goal counts as reached once the cube
+  stays within ``success_threshold`` for ``success_hold_steps`` consecutive steps;
+  the goal is then held fixed for a further ``goal_switch_delay`` steps (the success
+  window, so a success is a *parked* pose rather than a grazed one) before advancing.
+  The next goal is either a fresh uniform-SO(3) draw or a bounded perturbation of the
+  held one, per ``success_resample_full_so3``. The cube itself is reset by an event;
+  this term only manages the goal and draws a translucent "ghost" cube above the hand
+  at the goal orientation.
   """
 
   cfg: ReorientationCommandCfg

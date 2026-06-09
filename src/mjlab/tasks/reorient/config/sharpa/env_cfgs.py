@@ -19,8 +19,8 @@ from mjlab.tasks.reorient.reorient_env_cfg import (
   make_reorient_cube_env_cfg,
 )
 
-# Palm site used for cube-relative observations, the stay-near-palm reward, and the
-# drop termination.
+# Palm/wrist site used for the cube-relative observations and as a cage point for the
+# drop termination + escape penalty.
 PALM_SITE = "wrist_site"
 
 # Fingertip sites used for the fingertip-relative observations.
