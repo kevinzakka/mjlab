@@ -69,13 +69,17 @@ def test_actuators_position_control_limits(sharpa_model: mujoco.MjModel) -> None
 
 
 def test_fingertip_pad_friction(sharpa_model: mujoco.MjModel) -> None:
-  """Fingertip elastomer pads are grippy (sliding friction 1.0); other hand geoms 0.5."""
+  """Fingertip elastomer pads are grippy (sliding friction 1.0); other hand geoms 0.5.
+
+  Pad solref is stiffened to (0.012, 1.0) in sharpa_constants so the pads stop
+  being the soft half of the finger-cube contact; the matching cube-side override
+  lives in the reorient env cfg.
+  """
   for finger in ("thumb", "index", "middle", "ring", "pinky"):
     pad = sharpa_model.geom(f"right_{finger}_pad_collision")
     assert pad.friction[0] == 1.0
     assert pad.condim == 3
-    # Intrinsic elastomer compliance stays in the XML.
-    np.testing.assert_allclose(pad.solref, (0.06, 0.9))
+    np.testing.assert_allclose(pad.solref, (0.012, 1.0))
   for name in ("palm000_collision", "right_index_PP_fit"):
     geom = sharpa_model.geom(name)
     assert geom.friction[0] == 0.5
