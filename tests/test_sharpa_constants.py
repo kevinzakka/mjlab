@@ -73,12 +73,15 @@ def test_fingertip_pad_friction(sharpa_model: mujoco.MjModel) -> None:
 
   Pad solref is stiffened to (0.012, 1.0) in sharpa_constants so the pads stop
   being the soft half of the finger-cube contact; the matching cube-side override
-  lives in the reorient env cfg.
+  lives in the reorient env cfg. The pads are condim 4 (soft-finger contact:
+  sliding + torsional friction); the torsional coefficient has units of length
+  (the contact-patch diameter). Both axes are randomized per-env in the env cfg.
   """
   for finger in ("thumb", "index", "middle", "ring", "pinky"):
     pad = sharpa_model.geom(f"right_{finger}_pad_collision")
-    assert pad.friction[0] == 1.0
-    assert pad.condim == 3
+    assert pad.condim == 4
+    assert pad.friction[0] == 1.0  # sliding
+    assert pad.friction[1] == 0.004  # torsional (patch diameter, metres)
     np.testing.assert_allclose(pad.solref, (0.012, 1.0))
   for name in ("palm000_collision", "right_index_PP_fit"):
     geom = sharpa_model.geom(name)

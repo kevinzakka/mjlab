@@ -61,10 +61,25 @@ def test_palm_site_filled() -> None:
   )
 
 
-def test_no_domain_randomization() -> None:
-  """No DR until the task trains well: only reset events are present."""
+def test_grip_friction_dr_is_startup() -> None:
+  """Grip-friction DR randomizes sliding + torsional friction once per env at build.
+
+  Friction is a material property, so it is sampled at ``startup`` (not per
+  ``reset``). The pad and cube each get a sliding (axis 0) and a torsional (axis 1)
+  term; all non-DR events stay ``reset``.
+  """
   cfg = load_env_cfg(TASK_ID)
-  assert all(term.mode == "reset" for term in cfg.events.values())
+  dr_terms = {
+    "cube_friction_slide",
+    "cube_friction_spin",
+    "pad_friction_slide",
+    "pad_friction_spin",
+  }
+  assert dr_terms <= set(cfg.events)
+  assert all(cfg.events[t].mode == "startup" for t in dr_terms)
+  assert all(
+    term.mode == "reset" for name, term in cfg.events.items() if name not in dr_terms
+  )
 
 
 def test_play_disables_corruption() -> None:

@@ -145,6 +145,13 @@ def sharpa_reorient_cube_env_cfg(
     collisions=(
       CollisionCfg(
         geom_names_expr=("cube_geom",),
+        # condim 4 + torsional friction to match the soft-finger pads (see
+        # SHARPA_COLLISION). Friction combines by max at equal priority, so the
+        # cube's torsional coefficient must also be set/randomized or it would floor
+        # the grip's torsional friction. friction is (sliding, torsional); both axes
+        # are overridden per-env by the grip-friction DR at startup.
+        condim={"cube_geom": 4},
+        friction={"cube_geom": (1.0, 0.004)},
         solref={"cube_geom": (0.012, 1.0)},
         solimp={"cube_geom": (0.95, 0.99, 0.0005, 0.5, 2.0)},
         disable_other_geoms=False,
@@ -208,6 +215,10 @@ def sharpa_reorient_cube_env_cfg(
   # Place the cube in the hand cradle (tracks the hand under reset pitch).
   reset_event = cfg.events["reset_hand_and_cube"]
   reset_event.params["cradle_offset_b"] = CRADLE_OFFSET_B
+
+  # Fill the per-robot fingertip-pad geoms for grip-friction DR (sliding + torsional).
+  for term in ("pad_friction_slide", "pad_friction_spin"):
+    cfg.events[term].params["asset_cfg"].geom_names = (".*_pad_collision",)
 
   # Perturb the home grasp at reset: flexion and spread get separate ranges.
   for name, joints, joint_range in (

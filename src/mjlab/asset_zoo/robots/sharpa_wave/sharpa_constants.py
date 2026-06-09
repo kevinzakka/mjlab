@@ -118,9 +118,20 @@ HAND_ACTUATORS = tuple(
 
 SHARPA_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision", ".*_fit"),
-  condim={".*": 3},
+  # Soft-finger contact for the fingertip pads: condim 4 adds torsional friction
+  # (a twisting moment about the contact normal), which a condim-3 point contact
+  # cannot provide. A real compliant pad presses into a finite patch that resists
+  # the cube twisting in place; condim 4 is the standard soft-finger model and
+  # stabilizes the grasp. The contact condim is the max of the two geoms, so this
+  # makes every pad<->cube contact condim 4. Everything else stays condim 3.
+  condim={".*_pad_collision": 4, ".*": 3},
+  # Pad friction is (sliding, torsional). Torsional has units of length = the
+  # contact-patch diameter; 0.004 m (~4 mm) suits the ~8 mm-radius pad capsules and
+  # sits just below MuJoCo's 0.005 default. Both axes are overridden per-env by the
+  # grip-friction DR at startup (see the reorient env cfg); these are the DR-off
+  # nominals. Other colliders keep sliding-only friction (torsional inert at condim 3).
   friction={
-    ".*_pad_collision": (1.0,),
+    ".*_pad_collision": (1.0, 0.004),
     ".*": (0.5,),
   },
   # Stiffened fingertip pads. The pads are the soft half of the finger<->cube

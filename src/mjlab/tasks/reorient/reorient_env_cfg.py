@@ -2,6 +2,7 @@
 
 from mjlab.asset_zoo.props.qwerty_cube import CUBE_HALF_EXTENT
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
@@ -140,6 +141,67 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     # Per-robot finger-joint resets are added in the robot config (the joint
     # groups are robot-specific).
+    #
+    # Grip-friction domain randomization. The pads and cube are condim 4, so each
+    # contact has two live friction axes: sliding (axis 0) and torsional (axis 1).
+    # Friction combines by max at equal priority, so for each axis the cube (the
+    # object) carries the full target range and usually wins, while the pads sit on
+    # a lower/overlapping range that sets the floor and adds variation when the cube
+    # draws low. One term per (geom, axis) because each axis needs its own
+    # distribution: sliding is uniform; torsional is log_uniform (a small length
+    # spanning a multiplicative range, interpreted as the contact-patch diameter in
+    # metres). shared_random => all pads share one draw per env. startup mode =
+    # sampled once per env at build (friction is a material property). Realized grip
+    # values are max(pad, cube); verify the distributions with
+    # scripts/audit_reorient_friction.py. Pad geom pattern is filled in per-robot.
+    "cube_friction_slide": EventTermCfg(
+      func=dr.geom_friction,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("cube", geom_names=("cube_geom",)),
+        "operation": "abs",
+        "distribution": "uniform",
+        "axes": [0],
+        "ranges": (0.5, 1.2),
+        "shared_random": True,
+      },
+    ),
+    "cube_friction_spin": EventTermCfg(
+      func=dr.geom_friction,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("cube", geom_names=("cube_geom",)),
+        "operation": "abs",
+        "distribution": "log_uniform",
+        "axes": [1],
+        "ranges": (0.002, 0.006),
+        "shared_random": True,
+      },
+    ),
+    "pad_friction_slide": EventTermCfg(
+      func=dr.geom_friction,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
+        "operation": "abs",
+        "distribution": "uniform",
+        "axes": [0],
+        "ranges": (0.4, 1.0),
+        "shared_random": True,
+      },
+    ),
+    "pad_friction_spin": EventTermCfg(
+      func=dr.geom_friction,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
+        "operation": "abs",
+        "distribution": "log_uniform",
+        "axes": [1],
+        "ranges": (0.002, 0.006),
+        "shared_random": True,
+      },
+    ),
   }
 
   # Task rewards are bounded to [0, 1] and gated by "cube held" (zeroed when the
