@@ -12,8 +12,8 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
-from mjlab.tasks.manipulation import mdp as manipulation_mdp
-from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
+from mjlab.tasks.reorient import mdp as reorient_mdp
+from mjlab.tasks.reorient.mdp import ReorientationCommandCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
@@ -32,7 +32,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       noise=Unoise(n_min=-1.5, n_max=1.5),
     ),
     "cube_pos": ObservationTermCfg(
-      func=manipulation_mdp.ee_to_object_distance,
+      func=reorient_mdp.ee_to_object_distance,
       params={
         "object_name": "cube",
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -40,25 +40,25 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       noise=Unoise(n_min=-0.005, n_max=0.005),
     ),
     "cube_ori": ObservationTermCfg(
-      func=manipulation_mdp.object_orientation_6d,
+      func=reorient_mdp.object_orientation_6d,
       params={"object_name": "cube"},
     ),
     "cube_to_goal_ori": ObservationTermCfg(
-      func=manipulation_mdp.object_to_goal_orientation_6d,
+      func=reorient_mdp.object_to_goal_orientation_6d,
       params={"object_name": "cube", "command_name": "goal"},
     ),
     "cube_lin_vel": ObservationTermCfg(
-      func=manipulation_mdp.object_lin_vel_b,
+      func=reorient_mdp.object_lin_vel_b,
       params={"object_name": "cube"},
       noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
     "cube_ang_vel": ObservationTermCfg(
-      func=manipulation_mdp.object_ang_vel_b,
+      func=reorient_mdp.object_ang_vel_b,
       params={"object_name": "cube"},
       noise=Unoise(n_min=-0.1, n_max=0.1),
     ),
     "fingertip_to_cube": ObservationTermCfg(
-      func=manipulation_mdp.fingertip_to_object,
+      func=reorient_mdp.fingertip_to_object,
       params={
         "object_name": "cube",
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -66,7 +66,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       noise=Unoise(n_min=-0.005, n_max=0.005),
     ),
     "fingertip_to_palm": ObservationTermCfg(
-      func=manipulation_mdp.fingertip_to_palm,
+      func=reorient_mdp.fingertip_to_palm,
       params={
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
@@ -81,11 +81,11 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   critic_terms = {
     **actor_terms,
     "goal_hold_progress": ObservationTermCfg(
-      func=manipulation_mdp.goal_hold_progress,
+      func=reorient_mdp.goal_hold_progress,
       params={"command_name": "goal"},
     ),
     "goal_window_progress": ObservationTermCfg(
-      func=manipulation_mdp.goal_window_progress,
+      func=reorient_mdp.goal_window_progress,
       params={"command_name": "goal"},
     ),
   }
@@ -129,7 +129,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # Tilt the hand and nestle the cube in the (tilted) cradle with a random
     # SO(3) orientation. cradle_offset_b is filled in per-robot.
     "reset_hand_and_cube": EventTermCfg(
-      func=manipulation_mdp.reset_hand_and_object,
+      func=reorient_mdp.reset_hand_and_object,
       mode="reset",
       params={
         "hand_pitch_range": (-0.4, 0.1),
@@ -151,7 +151,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # Coarse kernel: flat inside the bound, gentle gradient over the whole range --
     # pulls the cube in from a cold goal.
     "orientation_tolerance": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tolerance,
+      func=reorient_mdp.cube_orientation_tolerance,
       weight=1.0,
       params={"command_name": "goal", **_HELD_GATE},
     ),
@@ -161,7 +161,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # the pose instead of hovering just outside the success threshold. Rewards only
     # *being close*, never the act of rotating, so it can't form a spinning optimum.
     "orientation_precise": RewardTermCfg(
-      func=manipulation_mdp.cube_orientation_tolerance,
+      func=reorient_mdp.cube_orientation_tolerance,
       weight=1.0,
       params={
         "command_name": "goal",
@@ -175,7 +175,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # in-threshold time (never dips at a goal switch), saturating at 1. Replaces a
     # sparse success bonus.
     "sustained_hold": RewardTermCfg(
-      func=manipulation_mdp.sustained_hold,
+      func=reorient_mdp.sustained_hold,
       weight=2.0,
       # ~one episode of in-threshold time to reach full reward, so a good policy
       # keeps earning marginal reward for holding longer instead of saturating early.
@@ -184,12 +184,12 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # Grasp-quality task rewards (bounded [0, 1], self-gating via contact): grip
     # with the fingertips and keep the cube off the palm.
     "fingertip_contact": RewardTermCfg(
-      func=manipulation_mdp.fingertip_object_contact,
+      func=reorient_mdp.fingertip_object_contact,
       weight=0.5,
       params={"sensor_name": "tip_object_contact"},
     ),
     "cube_off_palm": RewardTermCfg(
-      func=manipulation_mdp.cube_off_palm,
+      func=reorient_mdp.cube_off_palm,
       weight=0.5,
       params={
         "tip_sensor_name": "tip_object_contact",
@@ -198,7 +198,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     # Costs: unbounded regularizers + a small anti-drop gradient (escape distance).
     "cage_escape": RewardTermCfg(
-      func=manipulation_mdp.CageEscapePenalty,
+      func=reorient_mdp.CageEscapePenalty,
       weight=-1.0,
       params={
         "object_name": "cube",
@@ -208,7 +208,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
     "joint_vel_hinge": RewardTermCfg(
-      func=manipulation_mdp.joint_velocity_hinge_penalty,
+      func=reorient_mdp.joint_velocity_hinge_penalty,
       weight=-0.005,
       params={
         "max_vel": 1.0,
@@ -219,7 +219,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # each joint is penalized by how hard it works relative to its own limit rather
     # than the big proximal joints dominating a raw sum of squares.
     "joint_torque": RewardTermCfg(
-      func=manipulation_mdp.NormalizedJointTorquePenalty,
+      func=reorient_mdp.NormalizedJointTorquePenalty,
       weight=-0.1,
       params={"asset_cfg": SceneEntityCfg("robot")},
     ),
@@ -231,7 +231,7 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     # + wrist for N steps. Robust to hand pitch, omnidirectional, and debounced.
     # The palm body and cage sites are filled in per-robot.
     "cube_dropped": TerminationTermCfg(
-      func=manipulation_mdp.cage_drop,
+      func=reorient_mdp.cage_drop,
       params={
         "object_name": "cube",
         "margin": 0.02,

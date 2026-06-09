@@ -16,7 +16,7 @@ reach 0.10 rad but most reach 0.15 rad, the policy is converging but
 under-resolved relative to the gate, not stuck on the wrong solution.
 
 Example:
-  uv run python -m mjlab.tasks.manipulation.scripts.evaluate_reorient \\
+  uv run python -m mjlab.tasks.reorient.scripts.evaluate_reorient \\
     Mjlab-Reorient-Cube-Sharpa \\
     --wandb-run-path gcbc_researchers/mjlab/9o6qwl4o
 """
@@ -35,8 +35,8 @@ import tyro
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
-from mjlab.tasks.manipulation.mdp.commands import ReorientationCommand
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.tasks.reorient.mdp.commands import ReorientationCommand
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 

@@ -23,8 +23,8 @@ import torch
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
-from mjlab.tasks.manipulation.mdp.commands import ReorientationCommand
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.tasks.reorient.mdp.commands import ReorientationCommand
 
 
 def streak_lengths(within: np.ndarray) -> list[int]:

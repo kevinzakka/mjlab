@@ -36,8 +36,8 @@ import torch
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
-from mjlab.tasks.manipulation.mdp import ReorientationCommand
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.tasks.reorient.mdp import ReorientationCommand
 from mjlab.utils.lab_api.math import quat_box_plus, quat_error_magnitude
 from mjlab.utils.os import get_wandb_checkpoint_path
 

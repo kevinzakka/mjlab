@@ -7,9 +7,9 @@ import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.tasks.manipulation import mdp as manipulation_mdp
-from mjlab.tasks.manipulation.config.sharpa.env_cfgs import sharpa_reorient_cube_env_cfg
-from mjlab.tasks.manipulation.mdp.rewards import NormalizedJointTorquePenalty
+from mjlab.tasks.reorient import mdp as reorient_mdp
+from mjlab.tasks.reorient.config.sharpa.env_cfgs import sharpa_reorient_cube_env_cfg
+from mjlab.tasks.reorient.mdp.rewards import NormalizedJointTorquePenalty
 from mjlab.utils.lab_api.math import quat_mul
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -73,7 +73,7 @@ def test_sustained_hold_monotonic_no_dip_and_reset(env):
   # 4) Episode reset zeroes it; the reward is bounded.
   env.reset()
   assert int(torch.count_nonzero(cmd.cumulative_hold)) == 0
-  reward = manipulation_mdp.sustained_hold(env, "goal", 250.0, "cube", 0.05)
+  reward = reorient_mdp.sustained_hold(env, "goal", 250.0, "cube", 0.05)
   assert torch.isfinite(reward).all()
   assert float(reward.min()) >= 0.0 and float(reward.max()) <= 1.0
 

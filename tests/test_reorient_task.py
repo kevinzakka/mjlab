@@ -3,8 +3,8 @@
 import pytest
 import torch
 
-from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg
+from mjlab.tasks.reorient.mdp import ReorientationCommandCfg
 
 TASK_ID = "Mjlab-Reorient-Cube-Sharpa"
 PALM_SITE = "wrist_site"

@@ -14,8 +14,8 @@ from mjlab.envs.mdp import reset_joints_by_offset
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
-from mjlab.tasks.manipulation.mdp import ReorientationCommandCfg
-from mjlab.tasks.manipulation.reorient_cube_env_cfg import (
+from mjlab.tasks.reorient.mdp import ReorientationCommandCfg
+from mjlab.tasks.reorient.reorient_env_cfg import (
   make_reorient_cube_env_cfg,
 )
 

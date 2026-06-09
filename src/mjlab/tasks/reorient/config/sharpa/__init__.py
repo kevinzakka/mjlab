@@ -1,5 +1,5 @@
-from mjlab.tasks.manipulation.rl import ManipulationOnPolicyRunner
 from mjlab.tasks.registry import register_mjlab_task
+from mjlab.tasks.reorient.rl import ManipulationOnPolicyRunner
 
 from .env_cfgs import sharpa_reorient_cube_env_cfg
 from .rl_cfg import sharpa_reorient_cube_ppo_runner_cfg
