@@ -180,6 +180,19 @@ def sharpa_reorient_cube_env_cfg(
       secondary=ContactMatch(mode="body", pattern="cube", entity="cube"),
       fields=("found",),
     ),
+    # Intra-hand self-contact (hand subtree vs itself; adjacent links are excluded
+    # so this is the non-adjacent finger<->finger / finger<->palm contact). Force
+    # history captures the per-substep peak. Read by the self_contact_force cost to
+    # encourage a gentle grasp.
+    ContactSensorCfg(
+      name="finger_self_contact",
+      primary=ContactMatch(mode="subtree", pattern=PALM_BODY, entity="robot"),
+      secondary=ContactMatch(mode="subtree", pattern=PALM_BODY, entity="robot"),
+      fields=("found", "force"),
+      reduce="maxforce",
+      num_slots=1,
+      history_length=4,
+    ),
   )
 
   # Fill per-robot palm site into the terms that need it.

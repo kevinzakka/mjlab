@@ -165,3 +165,26 @@ def cube_off_palm(
   tip_contact = (tip > 0).any(dim=-1)
   palm_contact = (palm > 0).any(dim=-1)
   return (tip_contact & ~palm_contact).float()
+
+
+def self_contact_force(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+) -> torch.Tensor:
+  """Total intra-hand self-contact force magnitude per env, in newtons.
+
+  Sums, over the hand geoms, each geom's peak self-contact force across the control
+  step's physics substeps (from the sensor's force history). Encourages a *gentle*
+  grasp -- fingers exerting almost no force on each other -- instead of a
+  brute-force grip that presses the fingers together. Use with a negative weight.
+  Linear (not squared) so a single hard contact doesn't dominate; if the value
+  function struggles with the spiky signal, feed a symlog of this to the critic.
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  data = sensor.data
+  if data.force_history is not None:  # [B, N, H, 3]: peak over the H substeps
+    fmag = torch.norm(data.force_history, dim=-1).amax(dim=-1)  # [B, N]
+  else:
+    assert data.force is not None
+    fmag = torch.norm(data.force, dim=-1)  # [B, N]
+  return fmag.sum(dim=-1)  # [B]
