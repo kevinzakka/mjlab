@@ -338,8 +338,17 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       mujoco=MujocoCfg(
         timestep=0.005,
         integrator="implicitfast",
-        cone="pyramidal",
-        impratio=1,
+        # Elliptic friction cone + high impratio for the soft-finger grasp. impratio
+        # hardens the friction constraint relative to normal, which kills the
+        # tangential creep (fingertips sliding across the cube during a static hold):
+        # measured ~5x less slip at impratio 10 vs the pyramidal/impratio-1 default,
+        # with the cube held as well or better. impratio is only principled on the
+        # elliptic cone. The cost is small -- on an idle GPU at condim 4, elliptic +
+        # impratio 10 is only ~7% slower than pyramidal + impratio 1 (the elliptic
+        # cone itself is ~2%, impratio the other ~5%). If a training run shows NaNs /
+        # conditioning trouble on float32, drop impratio to 5 (loses little slip).
+        cone="elliptic",
+        impratio=10,
         iterations=10,
         ls_iterations=20,
       ),

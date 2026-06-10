@@ -40,12 +40,17 @@ def test_task_registered() -> None:
 
 
 def test_sim_options() -> None:
-  """Simulator options (owned by SimulationCfg) match the contact-rich setup."""
+  """Simulator options (owned by SimulationCfg) match the contact-rich setup.
+
+  Elliptic cone + impratio 10: the soft-finger grasp needs a hard friction
+  constraint to suppress tangential creep, and impratio is only principled on the
+  elliptic cone.
+  """
   opt = load_env_cfg(TASK_ID).sim.mujoco
   assert opt.timestep == 0.005
   assert opt.integrator == "implicitfast"
-  assert opt.cone == "pyramidal"
-  assert opt.impratio == 1
+  assert opt.cone == "elliptic"
+  assert opt.impratio == 10
 
 
 def test_reorientation_command() -> None:
