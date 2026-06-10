@@ -286,11 +286,13 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"asset_cfg": SceneEntityCfg("robot")},
     ),
     # Gentleness: penalize total intra-hand self-contact force so the fingers hold
-    # the cube without pressing hard against each other. Weight tuned by sweep;
-    # 0.0 = off (matches policies trained before this term).
+    # the cube without pressing hard against each other. -0.05 chosen by a fine-tune
+    # weight sweep: it cuts the self-contact force ~42x (5.9 -> 0.14 N) with no loss in
+    # reach success/precision, and a from-scratch run confirmed it does not impede
+    # learning (only a small early lag that closes).
     "finger_self_force": RewardTermCfg(
       func=reorient_mdp.self_contact_force,
-      weight=0.0,
+      weight=-0.05,
       params={"sensor_name": "finger_self_contact"},
     ),
   }
