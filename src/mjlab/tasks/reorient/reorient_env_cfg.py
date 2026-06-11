@@ -258,6 +258,19 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "palm_sensor_name": "palm_object_contact",
       },
     ),
+    # Posture anchor: positive, bounded-[0,1] reward (1.0 at the home pose) that keeps
+    # the hand in an open, engaged posture instead of collapsing into a minimal
+    # fingertip pinch. The action is relative-to-current with no other pose cost, so
+    # without this the home pose is forgotten after the 0.4 s warmup. Scalar std=0.5
+    # rad; the mean over joints stays forgiving of the finger motion gaiting needs.
+    "posture": RewardTermCfg(
+      func=reorient_mdp.posture,
+      weight=0.5,
+      params={
+        "std": 0.5,
+        "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+      },
+    ),
     # Costs: unbounded regularizers + a small anti-drop gradient (escape distance).
     "cage_escape": RewardTermCfg(
       func=reorient_mdp.CageEscapePenalty,

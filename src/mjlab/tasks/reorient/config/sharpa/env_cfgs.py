@@ -180,6 +180,21 @@ def sharpa_reorient_cube_env_cfg(
       secondary=ContactMatch(mode="body", pattern="cube", entity="cube"),
       fields=("found",),
     ),
+    # Distal-finger grasp region: the last TWO phalanges per finger -- the
+    # fingertip pad plus the next segment in (MP for the 4 fingers, PP for the
+    # thumb, which has one fewer phalanx). Use this instead of the pad-only
+    # `tip_object_contact` to let the cube nestle in the distal fingers rather
+    # than being propped on the very fingertips.
+    ContactSensorCfg(
+      name="distal_finger_object",
+      primary=ContactMatch(
+        mode="geom",
+        pattern=(".*_pad_collision", ".*_MP_fit", ".*thumb_PP_fit"),
+        entity="robot",
+      ),
+      secondary=ContactMatch(mode="body", pattern="cube", entity="cube"),
+      fields=("found",),
+    ),
     # Intra-hand self-contact (hand subtree vs itself; adjacent links are excluded
     # so this is the non-adjacent finger<->finger / finger<->palm contact). Force
     # history captures the per-substep peak. Read by the self_contact_force cost to

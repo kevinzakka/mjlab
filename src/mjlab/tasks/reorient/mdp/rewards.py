@@ -167,6 +167,32 @@ def cube_off_palm(
   return (tip_contact & ~palm_contact).float()
 
 
+def posture(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg,
+  std: float = 0.5,
+) -> torch.Tensor:
+  """Positive, bounded-[0, 1] reward anchoring the hand to its default pose.
+
+  Returns ``exp(-mean((q - q_default)^2 / std^2))`` over the selected joints: 1.0 at
+  the home pose, decaying smoothly as joints deviate. Use with a *positive* weight to
+  keep the hand in an open, engaged posture instead of collapsing into a minimal
+  fingertip pinch -- the policy here has no other home anchor (the action is relative
+  to the current position, and there is no other pose cost).
+
+  ``std`` (rad) is a single scalar tolerance for all selected joints; the mean over
+  joints makes it forgiving of moving a couple of fingers (e.g. for gaiting) while
+  still rewarding the resting posture. A simplified scalar-std clone of the shared
+  ``mjlab.envs.mdp.posture`` (which resolves a per-joint std dict we do not need).
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  default_joint_pos = asset.data.default_joint_pos
+  assert default_joint_pos is not None
+  q = asset.data.joint_pos[:, asset_cfg.joint_ids]
+  q0 = default_joint_pos[:, asset_cfg.joint_ids]
+  return torch.exp(-torch.mean(torch.square(q - q0) / (std**2), dim=1))
+
+
 def self_contact_force(
   env: ManagerBasedRlEnv,
   sensor_name: str,
