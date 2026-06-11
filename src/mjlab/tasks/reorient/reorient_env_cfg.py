@@ -290,6 +290,16 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
+    # Joint-limit cost: a soft wall that penalizes only the amount a joint crosses its
+    # soft limit (zero inside the range), so it costs nothing in normal operation and
+    # only bites when the policy slams a joint into its stop -- which is jerky and hard
+    # on the real hand. Same term as the lift (-10) and velocity (-1) tasks; -1.0 here
+    # since the hand legitimately uses most of its flexion range for gaiting.
+    "joint_pos_limits": RewardTermCfg(
+      func=mdp.joint_pos_limits,
+      weight=-1.0,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
+    ),
     # Effort penalty: sum of squared per-joint torque fractions (tau/tau_max)^2, so
     # each joint is penalized by how hard it works relative to its own limit rather
     # than the big proximal joints dominating a raw sum of squares.
@@ -298,14 +308,17 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-0.1,
       params={"asset_cfg": SceneEntityCfg("robot")},
     ),
-    # Gentleness: penalize total intra-hand self-contact force so the fingers hold
-    # the cube without pressing hard against each other. -0.05 chosen by a fine-tune
-    # weight sweep: it cuts the self-contact force ~42x (5.9 -> 0.14 N) with no loss in
-    # reach success/precision, and a from-scratch run confirmed it does not impede
-    # learning (only a small early lag that closes).
+    # Gentleness: penalize intra-hand self-contact force. Kept small (-0.01) on purpose.
+    # The `posture` reward already removes most self-contact by spreading the fingers
+    # onto the cube instead of each other, so this only needs to trim the residual.
+    # There is a real contention with all-finger use: a stronger weight (-0.05/-0.1)
+    # finds it cheaper to retract a finger entirely than to hold it gently, partly
+    # disabling it despite posture; -0.01 crushes the bulk self-force while keeping all
+    # fingers engaged. (The dynamic impact spikes are better addressed by slowness than
+    # by a larger force weight.)
     "finger_self_force": RewardTermCfg(
       func=reorient_mdp.self_contact_force,
-      weight=-0.05,
+      weight=-0.01,
       params={"sensor_name": "finger_self_contact"},
     ),
   }
