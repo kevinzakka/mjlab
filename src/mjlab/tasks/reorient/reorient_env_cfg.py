@@ -118,6 +118,13 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       func=reorient_mdp.goal_window_progress,
       params={"command_name": "goal"},
     ),
+    # Privileged DR extrinsics: per-env physics the actor can't see. Makes the value
+    # function physics-aware (lower-variance advantages) and is the RMA-teacher latent.
+    "object_mass": ObservationTermCfg(func=reorient_mdp.object_mass),
+    "object_size": ObservationTermCfg(func=reorient_mdp.object_size),
+    "object_friction": ObservationTermCfg(func=reorient_mdp.object_friction),
+    "object_com": ObservationTermCfg(func=reorient_mdp.object_com),
+    "object_wrench": ObservationTermCfg(func=reorient_mdp.object_external_wrench),
   }
 
   observations = {

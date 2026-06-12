@@ -130,6 +130,21 @@ def test_dynamics_dr_and_encoder_bias() -> None:
   assert cfg.observations["critic"].terms["joint_pos"].params["biased"] is False
 
 
+def test_critic_sees_privileged_extrinsics() -> None:
+  """The DR'd physics (mass/size/friction/CoM/active wrench) are privileged: in the
+  critic group only, never the actor (which can't observe them on real hardware)."""
+  cfg = load_env_cfg(TASK_ID)
+  extrinsics = {
+    "object_mass",
+    "object_size",
+    "object_friction",
+    "object_com",
+    "object_wrench",
+  }
+  assert extrinsics <= set(cfg.observations["critic"].terms)
+  assert extrinsics.isdisjoint(set(cfg.observations["actor"].terms))
+
+
 def test_cube_impulse_perturbation() -> None:
   """Transient random impulses on the cube are wired as a per-step event with both
   force and torque kicks (Dactyl-style bump/spin -> recover)."""

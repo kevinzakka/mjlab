@@ -180,3 +180,60 @@ def fingertip_to_palm(
   tip_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids]  # (B, n, 3)
   rel_w = tip_pos_w - robot.data.root_link_pos_w.unsqueeze(1)
   return _points_to_base_frame(robot, rel_w).reshape(rel_w.shape[0], -1)
+
+
+# Privileged extrinsics (critic-only): the per-env domain-randomized physics. The actor
+# can't observe these on the real robot, but feeding them to the value function makes its
+# estimates physics-aware (lower-variance advantages), and they are the latent an RMA
+# teacher would encode. Bodies/geoms are selected by name via SceneEntityCfg and mapped
+# to the model through the entity's own index table -- no hardcoded indices. Returned
+# raw; obs normalization handles the differing scales.
+
+_CUBE_BODY = SceneEntityCfg("cube", body_names=(".*",))
+_CUBE_GEOM = SceneEntityCfg("cube", geom_names=("cube_geom",))
+
+
+def object_mass(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _CUBE_BODY
+) -> torch.Tensor:
+  """Per-env object body mass (kg). Shape (B, n_bodies)."""
+  obj: Entity = env.scene[asset_cfg.name]
+  return env.sim.model.body_mass[:, obj.indexing.body_ids[asset_cfg.body_ids]]
+
+
+def object_size(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _CUBE_GEOM
+) -> torch.Tensor:
+  """Per-env object geom half-extent (m); isotropic, so axis 0 is the full size."""
+  obj: Entity = env.scene[asset_cfg.name]
+  return env.sim.model.geom_size[:, obj.indexing.geom_ids[asset_cfg.geom_ids], 0]
+
+
+def object_friction(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _CUBE_GEOM
+) -> torch.Tensor:
+  """Per-env object sliding + torsional friction. Shape (B, n_geoms * 2)."""
+  obj: Entity = env.scene[asset_cfg.name]
+  geom_ids = obj.indexing.geom_ids[asset_cfg.geom_ids]
+  return env.sim.model.geom_friction[:, geom_ids, :2].reshape(env.num_envs, -1)
+
+
+def object_com(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _CUBE_BODY
+) -> torch.Tensor:
+  """Per-env object center-of-mass position in the body frame (m). Shape (B, 3)."""
+  obj: Entity = env.scene[asset_cfg.name]
+  body_ids = obj.indexing.body_ids[asset_cfg.body_ids]
+  return env.sim.model.body_ipos[:, body_ids].reshape(env.num_envs, -1)
+
+
+def object_external_wrench(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _CUBE_BODY
+) -> torch.Tensor:
+  """External force+torque currently applied to the object (the active impulse).
+
+  Time-varying, unlike the other extrinsics, so the critic can account for a
+  perturbation in flight instead of seeing it as value noise. Shape (B, 6)."""
+  obj: Entity = env.scene[asset_cfg.name]
+  body_ids = obj.indexing.body_ids[asset_cfg.body_ids]
+  return env.sim.data.xfrc_applied[:, body_ids].reshape(env.num_envs, -1)
