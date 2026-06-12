@@ -246,27 +246,24 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "shared_random": True,
       },
     ),
-    # Dynamics-gap DR: cube mass / CoM / size + joint encoder bias. All startup, so
-    # each env draws a fixed sample once (cheap; geom_size in particular cannot change
-    # after compile). Ranges are modest and tied to real uncertainty.
-    "cube_mass": EventTermCfg(
-      func=dr.body_mass,
+    # Dynamics-gap DR: cube inertial properties + size + joint encoder bias. All startup,
+    # so each env draws a fixed sample once. Ranges are modest and tied to real
+    # uncertainty.
+    #
+    # Inertial DR via the pseudo-inertia matrix (Rucker & Wensing 2022): it perturbs
+    # mass, inertia, and CoM together while guaranteeing physical consistency (positive-
+    # definite inertia) for any magnitude -- unlike body_mass, which would leave the
+    # inertia at nominal so a heavier cube would spin like a light one (bad for a
+    # reorientation task). NOTE: `alpha` is a log mass-density scale -- mass and inertia
+    # scale by e^(2*alpha) -- so alpha in [-0.1, 0.1] is ~+-20%. `t_range` is the CoM
+    # offset (m), folded in here so it isn't clobbered by pseudo_inertia rewriting ipos.
+    "cube_inertia": EventTermCfg(
+      func=dr.pseudo_inertia,
       mode="startup",
       params={
         "asset_cfg": SceneEntityCfg("cube", body_names=(".*",)),
-        "operation": "scale",
-        "distribution": "uniform",
-        "ranges": (0.8, 1.2),  # +-20% mass
-      },
-    ),
-    "cube_com": EventTermCfg(
-      func=dr.body_com_offset,
-      mode="startup",
-      params={
-        "asset_cfg": SceneEntityCfg("cube", body_names=(".*",)),
-        "operation": "add",
-        "distribution": "uniform",
-        "ranges": (-0.002, 0.002),  # +-2 mm CoM offset per axis (imperfect balance)
+        "alpha_range": (-0.1, 0.1),  # e^(2*alpha) ~ [0.82, 1.22]: ~+-20% mass + inertia
+        "t_range": (-0.002, 0.002),  # +-2 mm CoM offset per axis (imperfect balance)
       },
     ),
     # isotropic=True shares one scale across all axes so the cube stays a cube (a single

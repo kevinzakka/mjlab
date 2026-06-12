@@ -120,7 +120,7 @@ def test_dynamics_dr_and_encoder_bias() -> None:
   encoder (biased=True) while the privileged critic reads the true position.
   """
   cfg = load_env_cfg(TASK_ID)
-  for name in ("cube_mass", "cube_com", "cube_size", "encoder_bias"):
+  for name in ("cube_inertia", "cube_size", "encoder_bias"):
     assert name in cfg.events, f"missing DR event: {name}"
     assert cfg.events[name].mode == "startup"
   # cube_size must be isotropic (one factor on all axes -> stays a cube).
