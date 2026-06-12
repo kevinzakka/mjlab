@@ -34,20 +34,19 @@ register_mjlab_task(
 )
 
 # "Easy" inverted variant: palm-down geometry with the sim2real DR stripped (no
-# friction/inertia/size/encoder/impulse randomization, no mount tilt, clean obs) plus the
-# gravity-magnitude curriculum -- gravity points fully down the whole time, but its
-# strength ramps from near-weightless up to 9.81 over training, so the policy can learn
-# the inverted grasp against progressively more weight rather than against full gravity
-# from scratch. The clean, learnable inverted task; flip easy off to add the full DR stack
-# back for transfer.
+# friction/inertia/size/encoder/impulse randomization, no mount tilt, clean obs). Trains
+# at full gravity from the start -- with the cube seated deep in the palm this is learnable
+# directly, and it yields a fuller all-finger grasp than easing gravity in did: a gravity
+# curriculum's light early regime let the policy settle for a lazy thumb+2 grasp that
+# sufficed for a near-weightless cube and never recruited the other fingers. The clean,
+# learnable inverted task. The gravity curriculum is still available via the
+# ``gravity_curriculum`` flag (see ``GravityCurriculum``); it is left off here but may earn
+# its keep on the harder full-DR ``Inverted`` task above, where full-gravity-from-scratch
+# could be fragile.
 register_mjlab_task(
   task_id="Mjlab-Reorient-Cube-Sharpa-Inverted-Easy",
-  env_cfg=sharpa_reorient_cube_env_cfg(
-    inverted=True, easy=True, gravity_curriculum=True
-  ),
-  play_env_cfg=sharpa_reorient_cube_env_cfg(
-    play=True, inverted=True, easy=True, gravity_curriculum=True
-  ),
+  env_cfg=sharpa_reorient_cube_env_cfg(inverted=True, easy=True),
+  play_env_cfg=sharpa_reorient_cube_env_cfg(play=True, inverted=True, easy=True),
   rl_cfg=sharpa_reorient_cube_ppo_runner_cfg(),
   runner_cls=ManipulationOnPolicyRunner,
 )

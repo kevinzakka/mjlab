@@ -437,19 +437,21 @@ def test_normalized_torque_penalty(env) -> None:
 
 # --- Gravity curriculum (population performance-gated, shared ceiling) -------
 
-INVERTED_EASY_TASK = "Mjlab-Reorient-Cube-Sharpa-Inverted-Easy"
-
 
 @pytest.fixture(scope="module")
 def grav_env():
-  """Inverted-easy env, which wires the GravityCurriculum reset event.
+  """Inverted env built with the GravityCurriculum reset event explicitly enabled.
 
-  The curriculum's signal is the just-finished episode's reorientation success, so tests
-  fake "the population is doing the task" vs "not" by writing the goal command's
-  episode_success directly, and fake the passage of training time via
-  env.common_step_counter -- no policy or stepping needed.
+  The registered tasks leave the gravity curriculum off (full gravity from the start works
+  and grasps better), so it is switched on here via the ``gravity_curriculum`` flag to
+  exercise the machinery. The curriculum's signal is the just-finished episode's
+  reorientation success, so tests fake "the population is doing the task" vs "not" by
+  writing the goal command's episode_success directly, and fake the passage of training
+  time via env.common_step_counter -- no policy or stepping needed.
   """
-  cfg = load_env_cfg(INVERTED_EASY_TASK)
+  from mjlab.tasks.reorient.config.sharpa.env_cfgs import sharpa_reorient_cube_env_cfg
+
+  cfg = sharpa_reorient_cube_env_cfg(inverted=True, easy=True, gravity_curriculum=True)
   cfg.scene.num_envs = 8
   e = ManagerBasedRlEnv(cfg=cfg, device=get_test_device())
   e.reset()
