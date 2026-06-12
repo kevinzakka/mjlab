@@ -279,6 +279,20 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "bias_range": (-0.02, 0.02),  # +-0.02 rad (~1.1 deg) joint calibration error
       },
     ),
+    # Transient random impulses on the cube (Dactyl-style): occasionally bump/spin it so
+    # the policy learns to recover instead of assuming a perfectly stable grasp. Runs on
+    # mode="step" with a self-managing cooldown -> trigger -> sustain -> expire cycle.
+    "cube_impulse": EventTermCfg(
+      func=mdp.apply_body_impulse,
+      mode="step",
+      params={
+        "asset_cfg": SceneEntityCfg("cube", body_names=(".*",)),
+        "force_range": (-1.0, 1.0),  # N per axis; the cube weighs ~1.5 N
+        "torque_range": (-0.003, 0.003),  # N*m per axis (~1.8 rad/s spin kick)
+        "duration_s": (0.02, 0.05),  # brief
+        "cooldown_s": (0.5, 2.0),  # random gap between impulses
+      },
+    ),
   }
 
   # Task rewards are bounded to [0, 1] and gated by "cube held" (zeroed when the

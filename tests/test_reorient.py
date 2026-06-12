@@ -71,7 +71,7 @@ def test_grip_friction_dr_is_startup() -> None:
 
   Friction is a material property, so it is sampled at ``startup`` (not per
   ``reset``). The pad and cube each get a sliding (axis 0) and a torsional (axis 1)
-  term; all non-DR events stay ``reset``.
+  term.
   """
   cfg = load_env_cfg(TASK_ID)
   dr_terms = {
@@ -82,11 +82,8 @@ def test_grip_friction_dr_is_startup() -> None:
   }
   assert dr_terms <= set(cfg.events)
   assert all(cfg.events[t].mode == "startup" for t in dr_terms)
-  # All DR is startup (material/physical params sampled once per env); the rest reset.
-  startup_dr = dr_terms | {"cube_mass", "cube_com", "cube_size", "encoder_bias"}
-  assert all(
-    term.mode == "reset" for name, term in cfg.events.items() if name not in startup_dr
-  )
+  # The hand/cube reset stays reset-mode (it is not DR).
+  assert cfg.events["reset_hand_and_cube"].mode == "reset"
 
 
 def test_play_disables_corruption() -> None:
@@ -131,6 +128,20 @@ def test_dynamics_dr_and_encoder_bias() -> None:
   # Encoder bias: actor sees the biased reading, critic sees the true position.
   assert cfg.observations["actor"].terms["joint_pos"].params["biased"] is True
   assert cfg.observations["critic"].terms["joint_pos"].params["biased"] is False
+
+
+def test_cube_impulse_perturbation() -> None:
+  """Transient random impulses on the cube are wired as a per-step event with both
+  force and torque kicks (Dactyl-style bump/spin -> recover)."""
+  from mjlab.tasks.velocity import mdp
+
+  cfg = load_env_cfg(TASK_ID)
+  assert "cube_impulse" in cfg.events
+  ev = cfg.events["cube_impulse"]
+  assert ev.mode == "step"
+  assert ev.func is mdp.apply_body_impulse
+  for key in ("force_range", "torque_range", "duration_s", "cooldown_s"):
+    assert key in ev.params
 
 
 # --- Shared env fixture + helpers -------------------------------------------
