@@ -14,6 +14,7 @@ from mjlab.managers.observation_manager import (
 from mjlab.utils.noise.noise_cfg import (
   ConstantNoiseCfg,
   NoiseModelWithAdditiveBiasCfg,
+  OutlierNoiseCfg,
 )
 
 
@@ -313,3 +314,61 @@ def test_multiple_terms_with_different_noise(mock_env, device):
   # Concatenated: [1.1, 1.1, 6.0, 6.0]
   expected = torch.tensor([[1.1, 1.1, 6.0, 6.0]] * 4, device=device)
   assert torch.allclose(policy_obs, expected)
+
+
+# --- OutlierNoiseCfg ("blip") --------------------------------------------------
+
+
+def test_outlier_noise_baseline_only_when_prob_zero(device):
+  """With outlier_prob=0, only the baseline uniform noise in [n_min, n_max] applies."""
+  torch.manual_seed(0)
+  noise = OutlierNoiseCfg(n_min=-0.05, n_max=0.05, outlier_prob=0.0)
+  out = noise.apply(torch.zeros((10000, 6), device=device))
+  assert out.min() >= -0.05 - 1e-6
+  assert out.max() <= 0.05 + 1e-6
+
+
+def test_outlier_noise_blips_every_row_when_prob_one(device):
+  """outlier_prob=1: every environment row gets the large perturbation."""
+  torch.manual_seed(0)
+  noise = OutlierNoiseCfg(
+    n_min=0.0, n_max=0.0, outlier_prob=1.0, outlier_min=-0.5, outlier_max=0.5
+  )
+  out = noise.apply(torch.zeros((2000, 6), device=device))
+  # Every row perturbed well beyond the (zero) baseline, and bounded by the blip range.
+  assert (out.abs().amax(dim=1) > 0.05).all()
+  assert out.abs().max() <= 0.5 + 1e-6
+
+
+def test_outlier_noise_is_per_environment_not_per_element(device):
+  """A blip hits a whole environment row (one bad pose), not independent elements.
+
+  With zero baseline and a strictly-positive blip range, an unblipped row stays
+  exactly 0 while a blipped row has *every* component inside the blip range -- which
+  is only true if the blip mask is per-row.
+  """
+  torch.manual_seed(0)
+  noise = OutlierNoiseCfg(
+    n_min=0.0, n_max=0.0, outlier_prob=0.5, outlier_min=0.4, outlier_max=0.5
+  )
+  out = noise.apply(torch.zeros((5000, 6), device=device))
+  blipped = out.amax(dim=1) > 0.3
+  # Unblipped rows are untouched (exactly zero).
+  assert torch.count_nonzero(out[~blipped]) == 0
+  # Blipped rows have *all* components in the blip range (whole-row perturbation).
+  assert (out[blipped] >= 0.4 - 1e-6).all()
+  assert (out[blipped] <= 0.5 + 1e-6).all()
+  # And the blip rate matches outlier_prob.
+  assert 0.45 < blipped.float().mean().item() < 0.55
+
+
+def test_outlier_noise_validation():
+  """Invalid configs raise at construction."""
+  with pytest.raises(ValueError):
+    OutlierNoiseCfg(n_min=0.1, n_max=0.0)  # n_min > n_max
+  with pytest.raises(ValueError):
+    OutlierNoiseCfg(outlier_min=0.5, outlier_max=0.5)  # not strictly increasing
+  with pytest.raises(ValueError):
+    OutlierNoiseCfg(outlier_prob=1.5)  # out of [0, 1]
+  with pytest.raises(ValueError):
+    OutlierNoiseCfg(operation="scale")  # add-only

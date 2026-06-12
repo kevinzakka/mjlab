@@ -5,6 +5,7 @@ from mjlab.utils.noise.noise_cfg import NoiseModelCfg as NoiseModelCfg
 from mjlab.utils.noise.noise_cfg import (
   NoiseModelWithAdditiveBiasCfg as NoiseModelWithAdditiveBiasCfg,
 )
+from mjlab.utils.noise.noise_cfg import OutlierNoiseCfg as OutlierNoiseCfg
 from mjlab.utils.noise.noise_cfg import UniformNoiseCfg as UniformNoiseCfg
 from mjlab.utils.noise.noise_model import NoiseModel as NoiseModel
 from mjlab.utils.noise.noise_model import (

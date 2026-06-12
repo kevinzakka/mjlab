@@ -92,6 +92,29 @@ def test_play_disables_corruption() -> None:
   assert cfg.observations["actor"].enable_corruption is False
 
 
+def test_perception_dr_actor_corrupted_critic_clean() -> None:
+  """The cube-pose obs carry noise + a per-env pose "blip" on the actor; the privileged
+  critic is clean (enable_corruption=False strips it). No delay and no history are
+  modeled (a realistic constant lag and any history would be a later add).
+  """
+  from mjlab.utils.noise import OutlierNoiseCfg
+
+  cfg = load_env_cfg(TASK_ID)  # training cfg (corruption on)
+  actor = cfg.observations["actor"]
+  critic = cfg.observations["critic"]
+  assert actor.enable_corruption is True
+  assert critic.enable_corruption is False
+
+  # The orientation terms carry the per-env pose "blip" on the actor.
+  assert isinstance(actor.terms["cube_ori"].noise, OutlierNoiseCfg)
+  assert isinstance(actor.terms["cube_to_goal_ori"].noise, OutlierNoiseCfg)
+
+  # No delay, no history (kept simple until a realistic, hardware-measured lag).
+  for term in ("cube_pos", "cube_ori", "cube_to_goal_ori"):
+    assert actor.terms[term].delay_max_lag == 0
+  assert actor.history_length in (None, 0)
+
+
 # --- Shared env fixture + helpers -------------------------------------------
 
 

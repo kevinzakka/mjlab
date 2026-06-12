@@ -113,6 +113,51 @@ class GaussianNoiseCfg(NoiseCfg):
       raise ValueError(f"Unsupported noise operation: {self.operation}")
 
 
+@dataclass
+class OutlierNoiseCfg(NoiseCfg):
+  """Baseline uniform noise plus an occasional per-environment "blip".
+
+  Each step, every element gets small uniform noise in ``[n_min, n_max]`` (the normal
+  sensor noise). Additionally, with probability ``outlier_prob`` sampled *independently
+  per environment*, that environment's entire observation row receives a large uniform
+  perturbation in ``[outlier_min, outlier_max]`` -- modeling a gross estimation glitch
+  (e.g. a vision pose estimate momentarily jumping to a wrong solution). The blip is
+  per-environment (the whole row, not per-element) so it reads as one bad pose, not
+  independent component noise. Only the ``"add"`` operation is supported.
+  """
+
+  n_min: float = 0.0
+  n_max: float = 0.0
+  outlier_prob: float = 0.0
+  outlier_min: float = -1.0
+  outlier_max: float = 1.0
+
+  def __post_init__(self):
+    if self.n_min > self.n_max:
+      raise ValueError(f"n_min ({self.n_min}) must be <= n_max ({self.n_max})")
+    if self.outlier_min >= self.outlier_max:
+      raise ValueError(
+        f"outlier_min ({self.outlier_min}) must be < outlier_max ({self.outlier_max})"
+      )
+    if not 0.0 <= self.outlier_prob <= 1.0:
+      raise ValueError(f"outlier_prob must be in [0, 1], got {self.outlier_prob}")
+    if self.operation != "add":
+      raise ValueError("OutlierNoiseCfg only supports operation='add'.")
+
+  @override
+  def apply(self, data: torch.Tensor) -> torch.Tensor:
+    out = data + (torch.rand_like(data) * (self.n_max - self.n_min) + self.n_min)
+    if self.outlier_prob > 0.0:
+      # Per-environment blip mask, broadcast over all non-batch dims.
+      mask = torch.rand(data.shape[0], device=data.device) < self.outlier_prob
+      mask = mask.view(-1, *([1] * (data.dim() - 1))).to(data.dtype)
+      blip = (
+        torch.rand_like(data) * (self.outlier_max - self.outlier_min) + self.outlier_min
+      )
+      out = out + mask * blip
+    return out
+
+
 ##
 # Noise models.
 ##

@@ -16,6 +16,7 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.reorient import mdp as reorient_mdp
 from mjlab.tasks.reorient.mdp import ReorientationCommandCfg
 from mjlab.tasks.velocity import mdp
+from mjlab.utils.noise import OutlierNoiseCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -30,8 +31,17 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "joint_vel": ObservationTermCfg(
       func=mdp.joint_vel_rel,
-      noise=Unoise(n_min=-1.5, n_max=1.5),
+      # ~ joint_pos noise (0.01 rad) differenced over the 0.02 s control step: real
+      # hand velocity is encoder-differenced, so its noise scales as pos_noise / dt
+      # (~0.5 rad/s). The old +-1.5 was ~half the typical joint speed -- it drowned
+      # the signal rather than modeling the sensor.
+      noise=Unoise(n_min=-0.5, n_max=0.5),
     ),
+    # Cube-pose terms come from vision on the real robot, so they get the perception
+    # gap: position/orientation noise plus an occasional per-env "blip" on the
+    # orientation (a gross pose-estimate glitch, ~2% of steps). (Observation delay is
+    # deliberately not modeled: a realistic constant lag is a later, hardware-measured
+    # add, and the per-step-random delay we tried was both unrealistic and unhelpful.)
     "cube_pos": ObservationTermCfg(
       func=reorient_mdp.ee_to_object_distance,
       params={
@@ -43,10 +53,17 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
     "cube_ori": ObservationTermCfg(
       func=reorient_mdp.object_orientation_6d,
       params={"object_name": "cube"},
+      # ~3 deg baseline orientation noise on the 6D rep, plus a 2% blip of +-0.5.
+      noise=OutlierNoiseCfg(
+        n_min=-0.05, n_max=0.05, outlier_prob=0.02, outlier_min=-0.5, outlier_max=0.5
+      ),
     ),
     "cube_to_goal_ori": ObservationTermCfg(
       func=reorient_mdp.object_to_goal_orientation_6d,
       params={"object_name": "cube", "command_name": "goal"},
+      noise=OutlierNoiseCfg(
+        n_min=-0.05, n_max=0.05, outlier_prob=0.02, outlier_min=-0.5, outlier_max=0.5
+      ),
     ),
     "cube_lin_vel": ObservationTermCfg(
       func=reorient_mdp.object_lin_vel_b,
@@ -81,6 +98,8 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   # function makes the sparse success bonus Markovian for the critic.
   critic_terms = {
     **actor_terms,
+    # The critic is privileged: enable_corruption=False (below) strips the noise/blip
+    # so it sees the clean, current cube pose.
     "goal_hold_progress": ObservationTermCfg(
       func=reorient_mdp.goal_hold_progress,
       params={"command_name": "goal"},
@@ -92,7 +111,11 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   observations = {
-    "actor": ObservationGroupCfg(actor_terms, enable_corruption=False),
+    # Actor sees the noisy + blipped vision obs (the sim-to-real perception gap); the
+    # critic is privileged and clean (enable_corruption=False strips the noise/blip).
+    # No observation history: with no modeled delay, history's main job (de-lagging) is
+    # gone, and a head-to-head showed it did not help on this task at equal compute.
+    "actor": ObservationGroupCfg(actor_terms, enable_corruption=True),
     "critic": ObservationGroupCfg(critic_terms, enable_corruption=False),
   }
 
