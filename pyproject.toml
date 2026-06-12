@@ -73,6 +73,7 @@ dev = [
   "pytest>=v9.0.3",
   "ruff>=v0.14.14",
   "ty>=v0.0.14",
+  "rerun-sdk>=0.20",
 ]
 docs = [
   "myst-parser>=4.0.1",
