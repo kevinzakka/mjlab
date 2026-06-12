@@ -130,6 +130,16 @@ def test_dynamics_dr_and_encoder_bias() -> None:
   assert cfg.observations["critic"].terms["joint_pos"].params["biased"] is False
 
 
+def test_hand_mount_tilt_dr() -> None:
+  """The hand reset randomizes roll/pitch/yaw -- the gravity direction in the hand
+  frame (a fixed fixture's mounting slop). Roll/yaw are kept small vs. the wider pitch.
+  """
+  p = load_env_cfg(TASK_ID).events["reset_hand_and_cube"].params
+  assert p["hand_roll_range"] == (-0.1, 0.1)
+  assert p["hand_yaw_range"] == (-0.1, 0.1)
+  assert p["hand_pitch_range"] == (-0.4, 0.1)
+
+
 def test_critic_sees_privileged_extrinsics() -> None:
   """The DR'd physics (mass/size/friction/CoM/active wrench) are privileged: in the
   critic group only, never the actor (which can't observe them on real hardware)."""

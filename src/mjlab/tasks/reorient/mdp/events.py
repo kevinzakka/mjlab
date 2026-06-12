@@ -31,6 +31,8 @@ def reset_hand_and_object(
   env_ids: torch.Tensor | None,
   cradle_offset_b: tuple[float, float, float],
   hand_pitch_range: tuple[float, float] = (0.0, 0.0),
+  hand_roll_range: tuple[float, float] = (0.0, 0.0),
+  hand_yaw_range: tuple[float, float] = (0.0, 0.0),
   position_noise: float = 0.0,
   hand_cfg: SceneEntityCfg = _DEFAULT_HAND_CFG,
   object_cfg: SceneEntityCfg = _DEFAULT_OBJECT_CFG,
@@ -38,9 +40,11 @@ def reset_hand_and_object(
   """Tilt the hand and nestle the object in its cradle, in one atomic reset.
 
   The cradle is rigid to the hand, so the object is placed in the hand-base body
-  frame (``cradle_offset_b``) *after* the pitch is sampled. This keeps the object
-  cradled at every hand tilt rather than at a fixed world point. Pitch is applied
-  about the base y-axis; the object's orientation is sampled uniformly over SO(3).
+  frame (``cradle_offset_b``) *after* the tilt is sampled. This keeps the object
+  cradled at every hand tilt rather than at a fixed world point. The hand is tilted by
+  a sampled roll/pitch/yaw about its base axes -- equivalently, this randomizes the
+  gravity direction in the hand frame (mounting slop of a fixed fixture). The object's
+  orientation is sampled uniformly over SO(3).
   """
   env_ids = resolve_env_ids(env, env_ids)
   n = len(env_ids)
@@ -50,12 +54,13 @@ def reset_hand_and_object(
   obj: Entity = env.scene[object_cfg.name]
   origins = env.scene.env_origins[env_ids]
 
-  # Hand: random pitch about the base y-axis, applied in the body frame.
+  # Hand: random roll/pitch/yaw tilt applied in the base body frame.
   base = hand.data.default_root_state[env_ids]
   base_pos = base[:, 0:3] + origins
-  zeros = torch.zeros(n, device=device)
+  roll = sample_uniform(hand_roll_range[0], hand_roll_range[1], n, device)
   pitch = sample_uniform(hand_pitch_range[0], hand_pitch_range[1], n, device)
-  base_quat = quat_mul(base[:, 3:7], quat_from_euler_xyz(zeros, pitch, zeros))
+  yaw = sample_uniform(hand_yaw_range[0], hand_yaw_range[1], n, device)
+  base_quat = quat_mul(base[:, 3:7], quat_from_euler_xyz(roll, pitch, yaw))
   hand.write_mocap_pose_to_sim(torch.cat([base_pos, base_quat], dim=-1), env_ids)
 
   # Object: nestled in the tilted cradle, random orientation, zero velocity.

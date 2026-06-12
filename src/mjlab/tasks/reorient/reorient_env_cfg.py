@@ -174,6 +174,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
       mode="reset",
       params={
         "hand_pitch_range": (-0.4, 0.1),
+        # Small roll/yaw cover the fixed fixture's mounting slop + leveling error (the
+        # gravity-direction gap for a bolted hand); kept tight unlike the wider pitch.
+        "hand_roll_range": (-0.1, 0.1),
+        "hand_yaw_range": (-0.1, 0.1),
         "position_noise": 0.005,
         "cradle_offset_b": (0.0, 0.0, 0.0),  # Set per-robot.
         "object_cfg": SceneEntityCfg("cube"),
