@@ -1,5 +1,7 @@
 """Base configuration for the in-hand cube reorientation task."""
 
+from dataclasses import replace
+
 from mjlab.asset_zoo.props.qwerty_cube import CUBE_HALF_EXTENT
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
@@ -27,6 +29,11 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   actor_terms = {
     "joint_pos": ObservationTermCfg(
       func=mdp.joint_pos_rel,
+      # biased=True: the actor sees the encoder reading (true + per-joint encoder bias),
+      # like the real hand. The relative action needs no bias handling (it cancels: the
+      # delta is applied to the true position both in sim and on real); only the obs
+      # carries the bias. The critic overrides this to the true position (see below).
+      params={"biased": True},
       noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
     "joint_vel": ObservationTermCfg(
@@ -99,7 +106,10 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
   critic_terms = {
     **actor_terms,
     # The critic is privileged: enable_corruption=False (below) strips the noise/blip
-    # so it sees the clean, current cube pose.
+    # so it sees the clean, current cube pose, and it reads the TRUE joint position
+    # (biased=False) rather than the encoder reading -- the bias param is per-term, not
+    # gated by enable_corruption, so it has to be overridden explicitly here.
+    "joint_pos": replace(actor_terms["joint_pos"], params={"biased": False}),
     "goal_hold_progress": ObservationTermCfg(
       func=reorient_mdp.goal_hold_progress,
       params={"command_name": "goal"},
@@ -223,6 +233,50 @@ def make_reorient_cube_env_cfg() -> ManagerBasedRlEnvCfg:
         "axes": [1],
         "ranges": (0.002, 0.006),
         "shared_random": True,
+      },
+    ),
+    # Dynamics-gap DR: cube mass / CoM / size + joint encoder bias. All startup, so
+    # each env draws a fixed sample once (cheap; geom_size in particular cannot change
+    # after compile). Ranges are modest and tied to real uncertainty.
+    "cube_mass": EventTermCfg(
+      func=dr.body_mass,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("cube", body_names=(".*",)),
+        "operation": "scale",
+        "distribution": "uniform",
+        "ranges": (0.8, 1.2),  # +-20% mass
+      },
+    ),
+    "cube_com": EventTermCfg(
+      func=dr.body_com_offset,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("cube", body_names=(".*",)),
+        "operation": "add",
+        "distribution": "uniform",
+        "ranges": (-0.002, 0.002),  # +-2 mm CoM offset per axis (imperfect balance)
+      },
+    ),
+    # isotropic=True shares one scale across all axes so the cube stays a cube (a single
+    # per-env factor on all three half-extents) rather than becoming a box.
+    "cube_size": EventTermCfg(
+      func=dr.geom_size,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("cube", geom_names=("cube_geom",)),
+        "operation": "scale",
+        "distribution": "uniform",
+        "ranges": (0.95, 1.05),  # +-5% size
+        "isotropic": True,
+      },
+    ),
+    "encoder_bias": EventTermCfg(
+      func=dr.encoder_bias,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+        "bias_range": (-0.02, 0.02),  # +-0.02 rad (~1.1 deg) joint calibration error
       },
     ),
   }

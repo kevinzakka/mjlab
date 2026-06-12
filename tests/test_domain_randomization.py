@@ -157,6 +157,43 @@ def test_add_operation(env):
   )
 
 
+def test_geom_size_isotropic(device):
+  """isotropic=True shares one draw across all size axes: a cube stays a cube while
+  still varying per env."""
+  env = create_test_env(device, num_envs=8, expand_fields=("geom_size",))
+  gid = env.scene["robot"].indexing.geom_ids[0]  # base_geom: a 0.1^3 cube
+  torch.manual_seed(0)
+  dr.geom_size(
+    env,
+    env_ids=None,
+    ranges=(0.5, 1.5),
+    operation="scale",
+    asset_cfg=SceneEntityCfg("robot", geom_ids=[0]),
+    isotropic=True,
+  )
+  sz = env.sim.model.geom_size[:, gid, :]  # (num_envs, 3)
+  assert (
+    sz.max(dim=1).values - sz.min(dim=1).values
+  ).abs().max() < 1e-6  # stays a cube
+  assert len(torch.unique(sz[:, 0])) >= 2  # varies per env
+
+
+def test_geom_size_anisotropic_by_default(device):
+  """Default (isotropic=False) scales each axis independently -> a cube becomes a box."""
+  env = create_test_env(device, num_envs=8, expand_fields=("geom_size",))
+  gid = env.scene["robot"].indexing.geom_ids[0]
+  torch.manual_seed(0)
+  dr.geom_size(
+    env,
+    env_ids=None,
+    ranges=(0.5, 1.5),
+    operation="scale",
+    asset_cfg=SceneEntityCfg("robot", geom_ids=[0]),
+  )
+  sz = env.sim.model.geom_size[:, gid, :]
+  assert (sz.max(dim=1).values - sz.min(dim=1).values).abs().max() > 1e-3  # a box
+
+
 # No accumulation (scale and add share the same mechanism).
 
 

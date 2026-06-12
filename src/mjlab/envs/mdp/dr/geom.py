@@ -256,8 +256,12 @@ def geom_size(
   operation: Operation | str = "scale",
   axes: list[int] | None = None,
   shared_random: bool = False,
+  isotropic: bool = False,
 ) -> None:
   """Randomize geom size and recompute broadphase bounds.
+
+  Set ``isotropic=True`` to share one draw across all size axes (e.g. scale a box geom
+  uniformly so a cube stays a cube instead of becoming a rectangle).
 
   After writing new values to ``geom_size``, this function automatically recomputes
   ``geom_rbound`` (bounding sphere) and ``geom_aabb`` (local bounding box) so that the
@@ -280,6 +284,7 @@ def geom_size(
     asset_cfg=asset_cfg,
     axes=axes,
     shared_random=shared_random,
+    isotropic=isotropic,
     default_axes=[0, 1, 2],
   )
   _recompute_geom_bounds(env, env_ids, asset_cfg)

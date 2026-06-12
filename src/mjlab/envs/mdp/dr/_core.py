@@ -57,6 +57,7 @@ def _randomize_model_field(
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
   axes: list[int] | None = None,
   shared_random: bool = False,
+  isotropic: bool = False,
   default_axes: list[int] | None = None,
   valid_axes: list[int] | None = None,
   use_address: bool = False,
@@ -121,6 +122,7 @@ def _randomize_model_field(
       target_axes,
       env.device,
       operation,
+      isotropic,
     )
     random_values = random_values.expand_as(base_values)
   else:
@@ -131,6 +133,7 @@ def _randomize_model_field(
       target_axes,
       env.device,
       operation,
+      isotropic,
     )
 
   combined = operation.combine(base_values, random_values)
@@ -288,10 +291,17 @@ def _generate_random_values(
   target_axes: list[int],
   device: str,
   operation: Operation,
+  isotropic: bool = False,
 ) -> torch.Tensor:
-  """Generate random values for the specified axes."""
+  """Generate random values for the specified axes.
+
+  When ``isotropic`` is True, a single draw is shared across all target axes (using the
+  first axis's range), so e.g. a box geom is scaled uniformly and stays a cube rather
+  than becoming a rectangle. Default False preserves the per-axis behavior.
+  """
   result = operation.initialize(indexed_data)
 
+  shared_vals: torch.Tensor | None = None
   for axis in target_axes:
     lower, upper = axis_ranges[axis]
     lower_bound = torch.tensor([lower], device=device)
@@ -302,7 +312,11 @@ def _generate_random_values(
     else:
       shape = indexed_data.shape
 
-    random_vals = distribution.sample(lower_bound, upper_bound, shape, device)
+    if isotropic and shared_vals is not None:
+      random_vals = shared_vals
+    else:
+      random_vals = distribution.sample(lower_bound, upper_bound, shape, device)
+      shared_vals = random_vals
 
     if len(indexed_data.shape) > 2:
       result[..., axis] = random_vals.squeeze(-1)

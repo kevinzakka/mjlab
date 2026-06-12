@@ -82,8 +82,10 @@ def test_grip_friction_dr_is_startup() -> None:
   }
   assert dr_terms <= set(cfg.events)
   assert all(cfg.events[t].mode == "startup" for t in dr_terms)
+  # All DR is startup (material/physical params sampled once per env); the rest reset.
+  startup_dr = dr_terms | {"cube_mass", "cube_com", "cube_size", "encoder_bias"}
   assert all(
-    term.mode == "reset" for name, term in cfg.events.items() if name not in dr_terms
+    term.mode == "reset" for name, term in cfg.events.items() if name not in startup_dr
   )
 
 
@@ -113,6 +115,22 @@ def test_perception_dr_actor_corrupted_critic_clean() -> None:
   for term in ("cube_pos", "cube_ori", "cube_to_goal_ori"):
     assert actor.terms[term].delay_max_lag == 0
   assert actor.history_length in (None, 0)
+
+
+def test_dynamics_dr_and_encoder_bias() -> None:
+  """The physical-param DR (cube mass/CoM/size + joint encoder bias) is wired as startup
+  events, and the encoder bias is handled at the obs level: the actor reads the biased
+  encoder (biased=True) while the privileged critic reads the true position.
+  """
+  cfg = load_env_cfg(TASK_ID)
+  for name in ("cube_mass", "cube_com", "cube_size", "encoder_bias"):
+    assert name in cfg.events, f"missing DR event: {name}"
+    assert cfg.events[name].mode == "startup"
+  # cube_size must be isotropic (one factor on all axes -> stays a cube).
+  assert cfg.events["cube_size"].params["isotropic"] is True
+  # Encoder bias: actor sees the biased reading, critic sees the true position.
+  assert cfg.observations["actor"].terms["joint_pos"].params["biased"] is True
+  assert cfg.observations["critic"].terms["joint_pos"].params["biased"] is False
 
 
 # --- Shared env fixture + helpers -------------------------------------------
