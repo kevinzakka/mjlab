@@ -21,3 +21,33 @@ register_mjlab_task(
   rl_cfg=sharpa_reorient_cube_ppo_runner_cfg(),
   runner_cls=ManipulationOnPolicyRunner,
 )
+
+# Inverted (palm-down) variant: the hand is bolted upside down, so the cube hangs and
+# must be actively gripped against gravity rather than resting in the cup. The full
+# sim2real DR stack is kept.
+register_mjlab_task(
+  task_id="Mjlab-Reorient-Cube-Sharpa-Inverted",
+  env_cfg=sharpa_reorient_cube_env_cfg(inverted=True),
+  play_env_cfg=sharpa_reorient_cube_env_cfg(play=True, inverted=True),
+  rl_cfg=sharpa_reorient_cube_ppo_runner_cfg(),
+  runner_cls=ManipulationOnPolicyRunner,
+)
+
+# "Easy" inverted variant: palm-down geometry with the sim2real DR stripped (no
+# friction/inertia/size/encoder/impulse randomization, no mount tilt, clean obs) plus the
+# gravity-magnitude curriculum -- gravity points fully down the whole time, but its
+# strength ramps from near-weightless up to 9.81 over training, so the policy can learn
+# the inverted grasp against progressively more weight rather than against full gravity
+# from scratch. The clean, learnable inverted task; flip easy off to add the full DR stack
+# back for transfer.
+register_mjlab_task(
+  task_id="Mjlab-Reorient-Cube-Sharpa-Inverted-Easy",
+  env_cfg=sharpa_reorient_cube_env_cfg(
+    inverted=True, easy=True, gravity_curriculum=True
+  ),
+  play_env_cfg=sharpa_reorient_cube_env_cfg(
+    play=True, inverted=True, easy=True, gravity_curriculum=True
+  ),
+  rl_cfg=sharpa_reorient_cube_ppo_runner_cfg(),
+  runner_cls=ManipulationOnPolicyRunner,
+)

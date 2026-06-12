@@ -433,3 +433,183 @@ def test_normalized_torque_penalty(env) -> None:
   expected = torch.sum(torch.square(tau / term._tau_max), dim=-1)
   assert torch.allclose(value, expected, atol=1e-5)
   assert torch.isfinite(value).all() and (value >= 0).all()
+
+
+# --- Gravity curriculum (population performance-gated, shared ceiling) -------
+
+INVERTED_EASY_TASK = "Mjlab-Reorient-Cube-Sharpa-Inverted-Easy"
+
+
+@pytest.fixture(scope="module")
+def grav_env():
+  """Inverted-easy env, which wires the GravityCurriculum reset event.
+
+  The curriculum's signal is the just-finished episode's reorientation success, so tests
+  fake "the population is doing the task" vs "not" by writing the goal command's
+  episode_success directly, and fake the passage of training time via
+  env.common_step_counter -- no policy or stepping needed.
+  """
+  cfg = load_env_cfg(INVERTED_EASY_TASK)
+  cfg.scene.num_envs = 8
+  e = ManagerBasedRlEnv(cfg=cfg, device=get_test_device())
+  e.reset()
+  yield e
+  e.close()
+
+
+def _grav_term(env):
+  return env.event_manager.get_term_cfg("gravity").func
+
+
+def _all_ids(env):
+  return torch.arange(env.num_envs, device=env.device)
+
+
+def _reset_term(term, *, ceiling=None, ema=0.0, last_eval_step=0):
+  """Put the shared-state term in a known state for an isolated test."""
+  term._ceiling = term._floor if ceiling is None else ceiling
+  term._success_ema = ema
+  term._last_eval_step = last_eval_step
+
+
+def _set_success(env, rate):
+  """Fake the population reorientation-success fraction for the next curriculum call."""
+  env.command_manager.get_term("goal").episode_success[:] = rate
+
+
+def _drive(env, term, *, succeeded, steps, ids=None):
+  """Run one curriculum call faking a population that did/did-not reorient at a step."""
+  ids = _all_ids(env) if ids is None else ids
+  _set_success(env, 1.0 if succeeded else 0.0)
+  env.common_step_counter = steps
+  term(env, ids)
+
+
+def test_gravity_curriculum_is_class_event(grav_env):
+  """The curriculum is wired as a class-based reset event holding shared state."""
+  from mjlab.tasks.reorient.mdp.curriculums import GravityCurriculum
+
+  term = _grav_term(grav_env)
+  assert isinstance(term, GravityCurriculum)
+  assert grav_env.event_manager.get_term_cfg("gravity").mode == "reset"
+  # No curriculum-manager term: this lives entirely in the event.
+  assert "gravity_levels" not in getattr(
+    grav_env.curriculum_manager, "active_terms", []
+  )
+
+
+def test_gravity_curriculum_expands_opt_gravity(grav_env):
+  """Declaring model_fields=('opt.gravity',) expands gravity to (num_envs, 3)."""
+  g = grav_env.sim.model.opt.gravity
+  assert g.shape[0] == grav_env.num_envs
+  assert g.shape[-1] == 3
+
+
+def test_gravity_curriculum_starts_at_floor(grav_env):
+  """The shared ceiling initializes at the floor (degenerate band)."""
+  term = _grav_term(grav_env)
+  _reset_term(term)
+  assert term._ceiling == term._floor
+
+
+def test_gravity_curriculum_advances_when_population_succeeds(grav_env):
+  """A succeeding population raises the ceiling, once per interval."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term, ceiling=3.0, ema=term._advance_rate)
+  # Two evals an interval apart, population reorienting -> ceiling climbs by step each.
+  _drive(env, term, succeeded=True, steps=term._eval_interval)
+  assert term._ceiling == pytest.approx(3.0 + term._step)
+  _drive(env, term, succeeded=True, steps=2 * term._eval_interval)
+  assert term._ceiling == pytest.approx(3.0 + 2 * term._step)
+
+
+def test_gravity_curriculum_retreats_when_population_fails(grav_env):
+  """A failing population (low success fraction) lowers the ceiling."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term, ceiling=5.0, ema=term._retreat_rate)
+  _drive(env, term, succeeded=False, steps=term._eval_interval)
+  assert term._ceiling == pytest.approx(5.0 - term._step)
+
+
+def test_gravity_curriculum_holds_when_not_reorienting(grav_env):
+  """Merely holding the cube (no success) does not advance the ceiling."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term, ceiling=2.0, ema=0.0)
+  # Population never succeeds (episode_success == 0) across many intervals.
+  for k in range(1, 6):
+    _drive(env, term, succeeded=False, steps=k * term._eval_interval)
+  assert term._ceiling == pytest.approx(term._floor)  # stuck at floor, not advancing
+
+
+def test_gravity_curriculum_rate_limited(grav_env):
+  """The ceiling moves at most once per eval_interval, however many resets occur."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term, ceiling=3.0, ema=1.0)
+  # Many calls all within the same interval -> at most one advance.
+  for _ in range(10):
+    _drive(env, term, succeeded=True, steps=term._eval_interval)
+  assert term._ceiling == pytest.approx(3.0 + term._step)
+
+
+def test_gravity_curriculum_clamps_to_bounds(grav_env):
+  """The ceiling never exceeds ceiling_max nor drops below the floor."""
+  env = grav_env
+  term = _grav_term(env)
+  # Hammer upward across many intervals -> clamp at ceiling_max.
+  _reset_term(term, ceiling=term._ceiling_max - 0.1, ema=1.0)
+  for k in range(1, 8):
+    _drive(env, term, succeeded=True, steps=k * term._eval_interval)
+  assert term._ceiling == pytest.approx(term._ceiling_max)
+  # Hammer downward -> clamp at floor.
+  _reset_term(term, ceiling=term._floor + 0.1, ema=0.0)
+  for k in range(1, 8):
+    _drive(env, term, succeeded=False, steps=k * term._eval_interval)
+  assert term._ceiling == pytest.approx(term._floor)
+
+
+def test_gravity_curriculum_writes_gravity_in_band(grav_env):
+  """Each env's written gravity is along -z with magnitude in [floor, ceiling]."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term, ceiling=5.0, ema=0.0, last_eval_step=0)
+  # No interval elapsed -> ceiling stays 5.0; only the per-env write happens.
+  _set_success(env, 1.0)
+  env.common_step_counter = 1
+  term(env, _all_ids(env))
+  g = env.sim.model.opt.gravity
+  assert torch.allclose(g[:, :2], torch.zeros_like(g[:, :2]), atol=1e-5)
+  mags = -g[:, 2]
+  assert torch.all((mags >= term._floor - 1e-4) & (mags <= 5.0 + 1e-4))
+  # A nondegenerate band gives a spread across envs.
+  assert len(torch.unique(mags)) >= 2
+
+
+def test_gravity_curriculum_degenerate_band_at_floor(grav_env):
+  """At ceiling == floor every env gets exactly the floor magnitude."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term)  # ceiling == floor
+  _set_success(env, 0.0)
+  env.common_step_counter = 1
+  term(env, _all_ids(env))
+  g = env.sim.model.opt.gravity
+  expected = torch.tensor([0.0, 0.0, -term._floor], device=env.device).expand_as(g)
+  assert torch.allclose(g, expected, atol=1e-4)
+
+
+def test_gravity_curriculum_logs(grav_env):
+  """Ceiling and success-EMA are exposed under Curriculum/gravity_* for logging."""
+  env = grav_env
+  term = _grav_term(env)
+  _reset_term(term, ceiling=4.0, ema=0.9)
+  _set_success(env, 1.0)
+  env.common_step_counter = 1  # no eval this call
+  env.extras["log"] = {}
+  term(env, _all_ids(env))
+  log = env.extras["log"]
+  assert float(log["Curriculum/gravity_ceiling"]) == pytest.approx(4.0)
+  assert "Curriculum/gravity_success_ema" in log

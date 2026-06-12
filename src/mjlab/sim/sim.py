@@ -416,7 +416,14 @@ class Simulation:
     if not fields:
       return
 
-    invalid_fields = [f for f in fields if not hasattr(self._mj_model, f)]
+    def _has_nested_attr(obj: object, dotted: str) -> bool:
+      for part in dotted.split("."):
+        if not hasattr(obj, part):
+          return False
+        obj = getattr(obj, part)
+      return True
+
+    invalid_fields = [f for f in fields if not _has_nested_attr(self._mj_model, f)]
     if invalid_fields:
       raise ValueError(f"Fields not found in model: {invalid_fields}")
 

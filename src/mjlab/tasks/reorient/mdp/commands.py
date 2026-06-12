@@ -150,6 +150,10 @@ class ReorientationCommand(CommandTerm):
     self.in_success_window[env_ids] = False
     self.window_timer[env_ids] = 0
     self._sample_goal(env_ids)
+    # Pose the marker at the freshly drawn goal now, so it is correct on the reset frame
+    # rather than snapping into place one step later (it is otherwise only posed in
+    # _update_command, which runs on step).
+    self._pose_marker(env_ids)
 
   def _update_command(self) -> None:
     # Count each completed success once (at_goal is a one-shot pulse).
@@ -172,10 +176,15 @@ class ReorientationCommand(CommandTerm):
       self.window_timer[switch_ids] = 0
 
     # Pose the textured goal-marker cube above the hand at the goal orientation.
-    if self.marker is not None:
-      pos = self.robot.data.root_link_pos_w + self._marker_offset
-      pose = torch.cat([pos, self.goal_quat], dim=-1)
-      self.marker.write_mocap_pose_to_sim(pose, env_ids=self._all_env_ids)
+    self._pose_marker(self._all_env_ids)
+
+  def _pose_marker(self, env_ids: torch.Tensor) -> None:
+    """Pose the goal-marker mocap cube above the hand at the current goal orientation."""
+    if self.marker is None:
+      return
+    pos = self.robot.data.root_link_pos_w[env_ids] + self._marker_offset
+    pose = torch.cat([pos, self.goal_quat[env_ids]], dim=-1)
+    self.marker.write_mocap_pose_to_sim(pose, env_ids=env_ids)
 
 
 @dataclass(kw_only=True)

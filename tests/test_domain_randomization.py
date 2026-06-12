@@ -2051,3 +2051,96 @@ def test_pair_friction_invalid_name(pair_env):
   with pytest.raises(ValueError, match="nonexistent_pair"):
     cfg = SceneEntityCfg("robot", pair_names=("nonexistent_pair",))
     cfg.resolve(env.scene)
+
+
+# Per-world gravity (model.opt.gravity) expansion + direction DR.
+
+
+def _make_gravity_env(device, num_envs):
+  """Free-falling box (no ground) with per-world gravity expanded."""
+  entity_cfg = EntityCfg(spec_fn=lambda: mujoco.MjSpec.from_string(ROBOT_XML))
+  scene_cfg = SceneCfg(num_envs=num_envs, entities={"robot": entity_cfg})
+  scene = Scene(scene_cfg, device)
+  model = scene.compile()
+  sim = Simulation(num_envs=num_envs, cfg=SimulationCfg(), model=model, device=device)
+  scene.initialize(model, sim.model, sim.data)
+  sim.expand_model_fields(("opt.gravity",))
+  return Env(scene, sim, device)
+
+
+def test_gravity_expansion_shape(device):
+  """opt.gravity expands from (1,) to (num_envs,) vec3 -> torch (num_envs, 3)."""
+  env = _make_gravity_env(device, NUM_ENVS)
+  grav = env.sim.model.opt.gravity
+  assert grav.shape[0] == NUM_ENVS
+  assert grav.shape[-1] == 3
+
+
+def test_gravity_direction_endpoints(device):
+  """tilt 0 -> +z (up); tilt pi -> -z (down); magnitude preserved."""
+  env = _make_gravity_env(device, NUM_ENVS)
+
+  dr.gravity_direction(env, env_ids=None, tilt_range=(0.0, 0.0), magnitude=9.81)
+  up = env.sim.model.opt.gravity
+  assert torch.allclose(
+    up, torch.tensor([0.0, 0.0, 9.81], device=device).expand_as(up), atol=1e-4
+  )
+
+  dr.gravity_direction(env, env_ids=None, tilt_range=(math.pi, math.pi), magnitude=9.81)
+  down = env.sim.model.opt.gravity
+  assert torch.allclose(
+    down, torch.tensor([0.0, 0.0, -9.81], device=device).expand_as(down), atol=1e-4
+  )
+
+
+def test_gravity_direction_distribution(device):
+  """A nonzero tilt range gives per-env diversity at a preserved magnitude."""
+  torch.manual_seed(0)
+  env = _make_gravity_env(device, NUM_ENVS)
+  dr.gravity_direction(env, env_ids=None, tilt_range=(0.0, math.pi), magnitude=9.81)
+  grav = env.sim.model.opt.gravity
+  mags = torch.linalg.norm(grav, dim=-1)
+  assert torch.allclose(mags, torch.full_like(mags, 9.81), atol=1e-4)
+  # Tilt away from pure +z varies across envs (z-components differ).
+  assert len(torch.unique(grav[:, 2])) >= 2
+
+
+def test_gravity_per_world_physics(device):
+  """The engine reads gravity per world: opposite gravity -> opposite free-fall."""
+  env = _make_gravity_env(device, 2)
+  env_ids = torch.arange(2, device=device)
+  # Env 0 gravity up (+z), env 1 gravity down (-z).
+  env.sim.model.opt.gravity[env_ids] = torch.tensor(
+    [[0.0, 0.0, 9.81], [0.0, 0.0, -9.81]], device=device
+  )
+  env.sim.forward()
+  z0 = env.sim.data.qpos[:, 2].clone()  # free-joint z of the box, per world
+  for _ in range(20):
+    env.sim.step()
+  z1 = env.sim.data.qpos[:, 2]
+  dz = (z1 - z0).cpu()
+  # World 0 rose, world 1 fell.
+  assert dz[0] > 0 and dz[1] < 0, dz
+
+
+def test_gravity_magnitude_range_and_direction(device):
+  """Per-env magnitude in range; direction fixed at -z (full inverted)."""
+  torch.manual_seed(0)
+  env = _make_gravity_env(device, NUM_ENVS)
+  dr.gravity_magnitude(env, env_ids=None, mag_range=(1.0, 9.81))
+  grav = env.sim.model.opt.gravity
+  mags = torch.linalg.norm(grav, dim=-1)
+  assert torch.all((mags >= 1.0 - 1e-4) & (mags <= 9.81 + 1e-4))
+  assert len(torch.unique(mags)) >= 2
+  # All gravity points along -z (x, y components ~0; z negative).
+  assert torch.allclose(grav[:, :2], torch.zeros_like(grav[:, :2]), atol=1e-5)
+  assert torch.all(grav[:, 2] < 0)
+
+
+def test_gravity_magnitude_floor(device):
+  """A degenerate range pins every env to the same magnitude."""
+  env = _make_gravity_env(device, NUM_ENVS)
+  dr.gravity_magnitude(env, env_ids=None, mag_range=(2.0, 2.0))
+  grav = env.sim.model.opt.gravity
+  expected = torch.tensor([0.0, 0.0, -2.0], device=device).expand_as(grav)
+  assert torch.allclose(grav, expected, atol=1e-4)

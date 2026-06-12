@@ -44,6 +44,11 @@ from .joint import joint_limits as joint_limits
 from .joint import joint_stiffness as joint_stiffness
 from .joint import qpos0 as qpos0
 
+# Option (model.opt).
+# isort: split
+from .option import gravity_direction as gravity_direction
+from .option import gravity_magnitude as gravity_magnitude
+
 # Site.
 # isort: split
 from .site import site_pos as site_pos

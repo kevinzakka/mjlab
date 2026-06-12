@@ -11,9 +11,11 @@ from mjlab.asset_zoo.robots.sharpa_wave import get_sharpa_right_cfg
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import reset_joints_by_offset
+from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
+from mjlab.tasks.reorient import mdp as reorient_mdp
 from mjlab.tasks.reorient.mdp import ReorientationCommandCfg
 from mjlab.tasks.reorient.reorient_env_cfg import (
   make_reorient_cube_env_cfg,
@@ -36,41 +38,85 @@ FINGERTIP_SITES = (
 # Hand base body, used to center the viewer.
 PALM_BODY = "right_hand_C_MC"
 
-# Raise the (fixed-base) hand above the ground plane so no part of it dips below z=0.
+# Palm-up base orientation: hand +x (the palm normal) points to world +z, so gravity
+# seats the cube in the cup. Raise the (fixed-base) hand above the ground plane so no
+# part of it dips below z=0.
 HAND_POS = (0.0, 0.0, 0.09)
-
-# Palm-up base orientation.
 HAND_ROT = (0.70710678, 0.0, -0.70710678, 0.0)
 
-# Cube cradle, expressed relative to the hand base: center of the cup, between the palm
-# and the curled fingertips.
+# Palm-down ("inverted") variant: flip the palm normal to world -z (a sign flip on the
+# quat y-component), so the cube hangs and must be actively gripped against gravity.
+# Raise the hand further so the downward-pointing fingers and a dropped cube clear the
+# ground.
+INVERTED_HAND_POS = (0.0, 0.0, 0.2)
+INVERTED_HAND_ROT = (0.70710678, 0.0, 0.70710678, 0.0)
+
+# Cube cradle as a world offset from the hand base in the palm-up reference: center of the
+# cup, between the palm and the curled fingertips. Converted to the hand body frame below
+# (``_CRADLE_B``), it becomes orientation-independent -- the cube nestles in the same spot
+# of the hand however the hand is mounted (palm-up or inverted).
 CRADLE_LOCAL = (-0.09, 0.0, 0.052)
-CUBE_POS = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + HAND_POS[2])
-# Goal ghost sits above the cradled cube (offset is relative to the hand base).
-GHOST_OFFSET = (CRADLE_LOCAL[0], CRADLE_LOCAL[1], CRADLE_LOCAL[2] + 0.13)
+
+# Lift the cube out along the palm normal (body +x) at reset so SO(3) corner-down
+# orientations clear the cup instead of penetrating it (corner reaches ~1.65 cm deeper).
+CUBE_RESET_LIFT = 0.055
+
+# Inverted: seat the cube deeper toward the palm (a smaller lift out along the palm
+# normal) so the fingers -- already near full extension on this hand -- can actually close
+# around it. Palm-down the lift points away from the palm, so less lift = cube higher in
+# the grasp with real closing margin. Tune in the viewer.
+INVERTED_CUBE_RESET_LIFT = 0.02
 
 
-# Cradle in the hand-base body frame, so the cube tracks the hand under reset pitch.
 def _world_to_body(
-  vec_w: tuple[float, ...], quat: tuple[float, ...]
-) -> tuple[float, ...]:
+  vec_w: tuple[float, float, float], quat: tuple[float, float, float, float]
+) -> tuple[float, float, float]:
+  """Rotate a world-frame vector into the body frame of ``quat``."""
   conj = np.zeros(4)
   mujoco.mju_negQuat(conj, np.array(quat))
   res = np.zeros(3)
   mujoco.mju_rotVecQuat(res, np.array(vec_w), conj)
-  return tuple(res.tolist())
+  return (float(res[0]), float(res[1]), float(res[2]))
 
 
-# Spawn the cube lifted along the palm normal so SO(3) corner-down orientations
-# drop into the cup instead of penetrating it (corner reaches ~1.65 cm deeper).
-CUBE_RESET_LIFT = 0.055
-_cradle_b = _world_to_body(
-  tuple(c - h for c, h in zip(CUBE_POS, HAND_POS, strict=True)), HAND_ROT
-)
-_up_b = _world_to_body((0.0, 0.0, 1.0), HAND_ROT)
-CRADLE_OFFSET_B = tuple(
-  o + CUBE_RESET_LIFT * u for o, u in zip(_cradle_b, _up_b, strict=True)
-)
+def _body_to_world(
+  vec_b: tuple[float, float, float], quat: tuple[float, float, float, float]
+) -> tuple[float, float, float]:
+  """Rotate a body-frame vector into the world frame of ``quat``."""
+  res = np.zeros(3)
+  mujoco.mju_rotVecQuat(res, np.array(vec_b), np.array(quat))
+  return (float(res[0]), float(res[1]), float(res[2]))
+
+
+# Cube position in the hand-base body frame (orientation-independent), before the reset
+# lift along the palm normal (body +x) is added.
+_CRADLE_B = _world_to_body(CRADLE_LOCAL, HAND_ROT)
+
+
+def _compute_placement(
+  hand_pos: tuple[float, float, float],
+  hand_rot: tuple[float, float, float, float],
+  reset_lift: float = CUBE_RESET_LIFT,
+) -> tuple[
+  tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+]:
+  """Cube spawn position, goal-ghost world offset, and reset cradle offset for a mounting.
+
+  The body-frame cradle (``_CRADLE_B``) is fixed, so the cube sits in the same spot of the
+  hand at any base orientation; the reset offset adds ``reset_lift`` along the palm normal
+  (body +x). Only the world spawn pose and the goal-ghost marker (placed at
+  ``root_pos_w + offset``) are rotated by the hand quat.
+  """
+  cradle_w = _body_to_world(_CRADLE_B, hand_rot)
+  cube_pos = (
+    hand_pos[0] + cradle_w[0],
+    hand_pos[1] + cradle_w[1],
+    hand_pos[2] + cradle_w[2],
+  )
+  ghost_offset = (cradle_w[0], cradle_w[1], cradle_w[2] + 0.13)
+  cradle_offset_b = (_CRADLE_B[0] + reset_lift, _CRADLE_B[1], _CRADLE_B[2])
+  return cube_pos, ghost_offset, cradle_offset_b
+
 
 # Reset perturbation about the home grasp: a uniform offset added to the home pose
 # and clipped to joint limits. Flexion (curl) gets more range than abduction
@@ -128,15 +174,26 @@ def _make_sampling_viz_spec_fn(
 
 
 def sharpa_reorient_cube_env_cfg(
-  play: bool = False, use_mesh_collisions: bool = False
+  play: bool = False,
+  use_mesh_collisions: bool = False,
+  inverted: bool = False,
+  easy: bool = False,
+  gravity_curriculum: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   cfg = make_reorient_cube_env_cfg()
 
+  hand_pos = INVERTED_HAND_POS if inverted else HAND_POS
+  hand_rot = INVERTED_HAND_ROT if inverted else HAND_ROT
+  reset_lift = INVERTED_CUBE_RESET_LIFT if inverted else CUBE_RESET_LIFT
+  cube_pos, ghost_offset, cradle_offset_b = _compute_placement(
+    hand_pos, hand_rot, reset_lift
+  )
+
   robot_cfg = get_sharpa_right_cfg(use_mesh_collisions=use_mesh_collisions)
-  robot_cfg.init_state = replace(robot_cfg.init_state, pos=HAND_POS, rot=HAND_ROT)
+  robot_cfg.init_state = replace(robot_cfg.init_state, pos=hand_pos, rot=hand_rot)
   cube_cfg = EntityCfg(
     spec_fn=get_qwerty_cube_spec,
-    init_state=EntityCfg.InitialStateCfg(pos=CUBE_POS),
+    init_state=EntityCfg.InitialStateCfg(pos=cube_pos),
     # Match the stiffened fingertip-pad solref/solimp (see SHARPA_COLLISION). With
     # equal priority the finger<->cube contact is the 0.5 blend of pad and cube
     # params; setting the cube identical to the pads makes that blend deterministic
@@ -238,11 +295,11 @@ def sharpa_reorient_cube_env_cfg(
   goal_cmd = cfg.commands["goal"]
   assert isinstance(goal_cmd, ReorientationCommandCfg)
   goal_cmd.marker_name = "goal_marker"
-  goal_cmd.viz.offset = GHOST_OFFSET
+  goal_cmd.viz.offset = ghost_offset
 
   # Place the cube in the hand cradle (tracks the hand under reset pitch).
   reset_event = cfg.events["reset_hand_and_cube"]
-  reset_event.params["cradle_offset_b"] = CRADLE_OFFSET_B
+  reset_event.params["cradle_offset_b"] = cradle_offset_b
 
   # Fill the per-robot fingertip-pad geoms for grip-friction DR (sliding + torsional).
   for term in ("pad_friction_slide", "pad_friction_spin"):
@@ -263,10 +320,78 @@ def sharpa_reorient_cube_env_cfg(
       },
     )
 
+  if inverted:
+    # Palm-down: gravity pulls the cube off the hand, so there is no settling-by-
+    # dropping. Drop the action warmup (which freezes the home grasp while a palm-up
+    # cube falls into the cup) -- here a frozen open grasp would just let the cube
+    # fall, so let the policy act and close from the first step. The drop termination's
+    # grace window still shields the initial transient.
+    action = cfg.actions["joint_pos"]
+    assert isinstance(action, RelativeJointPositionActionCfg)
+    action.warmup_time_s = 0.0
+    # The cage's open-face margin (up_axis = palm normal) now faces gravity, so trim it
+    # so a fall is detected promptly rather than tolerated.
+    for cage_params in (
+      cfg.terminations["cube_dropped"].params,
+      cfg.rewards["cage_escape"].params,
+    ):
+      cage_params["up_margin"] = 0.02
+    # The default ghost sits directly above the cradle, where the upside-down hand
+    # occludes it. Offset it to the side and a touch up so it stays clearly visible.
+    goal_cmd.viz.offset = (
+      ghost_offset[0],
+      ghost_offset[1] + 0.13,
+      ghost_offset[2] - 0.07,
+    )
+
+  if easy:
+    # "Easy" baseline: strip the sim2real domain randomization added for transfer so the
+    # inverted grasp can be learned cleanly first. Removes grip-friction, inertial, size,
+    # encoder-bias, and impulse DR; zeros the mount-tilt; and disables perception noise.
+    for key in (
+      "cube_friction_slide",
+      "cube_friction_spin",
+      "pad_friction_slide",
+      "pad_friction_spin",
+      "cube_inertia",
+      "cube_size",
+      "encoder_bias",
+      "cube_impulse",
+    ):
+      cfg.events.pop(key, None)
+    reset_event.params["hand_pitch_range"] = (0.0, 0.0)
+    reset_event.params["hand_roll_range"] = (0.0, 0.0)
+    reset_event.params["hand_yaw_range"] = (0.0, 0.0)
+    cfg.observations["actor"].enable_corruption = False
+
+  if gravity_curriculum:
+    # Population performance-gated gravity-magnitude curriculum. Gravity points straight
+    # down (full inverted) the whole time; only its strength varies. All envs share one
+    # ceiling and sample |g| uniformly in [floor, ceiling] -- a narrow band that widens as
+    # the ceiling rises only when the population can do the *task* (reorientation success
+    # fraction high), with a rate limit. Gating on success rather than just holding keeps
+    # gravity low while reorientation develops, so the hard skill matures at reduced weight
+    # instead of gravity racing to full the moment the cube is merely held. Keeps every env
+    # in one observable band (the policy can't see gravity). Runs at reset.
+    cfg.events["gravity"] = EventTermCfg(
+      func=reorient_mdp.GravityCurriculum,
+      mode="reset",
+      params={
+        "floor": 1.0,  # m/s^2 (~10% weight): light but not weightless (keeps a gradient)
+        "ceiling_max": 9.81,
+        "step": 0.5,  # ceiling delta per evaluation
+        "advance_rate": 0.5,  # raise the ceiling when >=50% of episodes reach the goal
+        "retreat_rate": 0.2,  # lower it if <=20% do
+        "eval_interval": 24 * 30,  # ~30 iters between ceiling moves (rate limit)
+        "command_name": "goal",  # reorientation-success signal source
+        "direction": (0.0, 0.0, -1.0),
+      },
+    )
+
   # Draw the cube position-noise region as a group-5 box (hidden until toggled on).
   noise = reset_event.params["position_noise"]
   cube_pose_range = {ax: (-noise, noise) for ax in ("x", "y", "z")}
-  cfg.scene.spec_fn = _make_sampling_viz_spec_fn(CUBE_POS, cube_pose_range)
+  cfg.scene.spec_fn = _make_sampling_viz_spec_fn(cube_pos, cube_pose_range)
 
   cfg.viewer.body_name = PALM_BODY
 

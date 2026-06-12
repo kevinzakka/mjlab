@@ -48,9 +48,16 @@ def expand_model_fields(
     )
     return dst
 
-  for field in model.__dataclass_fields__:
-    if field in fields_to_expand:
-      array = getattr(model, field)
-      if array.shape[0] != 1:
-        continue  # Already per-world (e.g., variant compilation).
-      setattr(model, field, tile(array))
+  for field in fields_to_expand:
+    # Support nested fields via a dotted path (e.g. "opt.gravity"): traverse to the
+    # parent struct, expand the leaf array, and write it back on the parent.
+    *parents, leaf = field.split(".")
+    obj = model
+    for part in parents:
+      obj = getattr(obj, part)
+    if not hasattr(obj, leaf):
+      continue
+    array = getattr(obj, leaf)
+    if array.shape[0] != 1:
+      continue  # Already per-world (e.g., variant compilation).
+    setattr(obj, leaf, tile(array))
