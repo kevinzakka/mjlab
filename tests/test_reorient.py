@@ -174,9 +174,25 @@ def test_cube_impulse_perturbation() -> None:
 
 @pytest.fixture(scope="module")
 def env():
-  """Build the reorient env once for all runtime tests. Each test resets first."""
+  """Build the reorient env once for all runtime tests. Each test resets first.
+
+  All domain randomization is stripped here so these tests exercise the *deterministic*
+  MDP logic (state machine, rewards, observations): random physics, the cube impulse,
+  the mount tilt, and obs noise would otherwise let the cube drift out of threshold
+  under a zero action and make the assertions flaky. The DR is covered by the config
+  tests above.
+  """
   cfg = load_env_cfg(TASK_ID)
   cfg.scene.num_envs = 4
+  # Drop every DR event (startup physics + the per-step impulse); keep the resets.
+  cfg.events = {k: v for k, v in cfg.events.items() if v.mode == "reset"}
+  reset = cfg.events["reset_hand_and_cube"].params
+  reset["hand_pitch_range"] = (0.0, 0.0)
+  reset["hand_roll_range"] = (0.0, 0.0)
+  reset["hand_yaw_range"] = (0.0, 0.0)
+  reset["position_noise"] = 0.0
+  for group in cfg.observations.values():
+    group.enable_corruption = False
   e = ManagerBasedRlEnv(cfg=cfg, device=get_test_device())
   e.reset()
   yield e
