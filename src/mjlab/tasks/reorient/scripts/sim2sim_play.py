@@ -30,11 +30,17 @@ import tyro
 
 import mjlab.tasks.reorient.scripts.sim2sim_core as core
 
+# Thumb-to-pinky order for the tactile strip, so the panel reads left-to-right like a
+# splayed right hand.
+_FINGER_ORDER = ("thumb", "index", "middle", "ring", "pinky")
+
 
 class _RerunLogger:
-  """Streams scalar diagnostics to rerun (optional dependency)."""
+  """Streams scalar diagnostics (and optional tactile panels) to rerun."""
 
-  def __init__(self) -> None:
+  def __init__(
+    self, tactile: bool = False, rangefinder: bool = False, step_dt: float = 0.0
+  ) -> None:
     try:
       import rerun as rr  # pyright: ignore[reportMissingImports]
     except ModuleNotFoundError as e:
@@ -43,12 +49,163 @@ class _RerunLogger:
         "(it is in the dev group as 'rerun-sdk')."
       ) from e
     self.rr = rr
+    self.step_dt = step_dt  # control-step period (s), for the sim_time timeline
     rr.init("sim2sim_reorient", spawn=True)
+    if rangefinder:
+      self._send_rangefinder_blueprint()
+    elif tactile:
+      self._send_tactile_blueprint()
+
+  def _set_time(self, step: int) -> None:
+    """Index this frame on both a frame counter and a real ``sim_time`` axis.
+
+    ``step`` is monotonic across episodes. The ``sim_time`` (seconds) timeline lets
+    rerun space frames by elapsed sim time, so selecting it in rerun and playing at
+    real-time tracks the sim cadence; the bare ``control_step`` sequence does not (it
+    advances at rerun's own playback rate, independent of the MuJoCo viewer's speed).
+    """
+    self.rr.set_time("control_step", sequence=step)
+    self.rr.set_time("sim_time", duration=step * self.step_dt)
+
+  def _send_tactile_blueprint(self) -> None:
+    """Lay out the tactile views explicitly so all panels are visible and arranged."""
+    import rerun.blueprint as rrb  # pyright: ignore[reportMissingImports]
+
+    self.rr.send_blueprint(
+      rrb.Blueprint(
+        rrb.Vertical(
+          rrb.Spatial2DView(
+            origin="tactile/normal", name="normal force  (thumb→pinky)"
+          ),
+          rrb.Spatial2DView(
+            origin="tactile/shear", name="shear magnitude  (thumb→pinky)"
+          ),
+          rrb.TimeSeriesView(
+            origin="tactile_force", name="per-finger normal force (N)"
+          ),
+          row_shares=[3, 3, 2],
+        ),
+        rrb.BlueprintPanel(state="collapsed"),
+        rrb.SelectionPanel(state="collapsed"),
+      )
+    )
+
+  def _send_rangefinder_blueprint(self) -> None:
+    """Lay out the rangefinder views: the surface-normal (shape) strip over depth."""
+    import rerun.blueprint as rrb  # pyright: ignore[reportMissingImports]
+
+    self.rr.send_blueprint(
+      rrb.Blueprint(
+        rrb.Vertical(
+          rrb.Spatial2DView(
+            origin="rangefinder/shape",
+            name="cube surface normal / shape  (thumb→pinky)",
+          ),
+          rrb.Spatial2DView(
+            origin="rangefinder/depth", name="cube depth / relief  (thumb→pinky)"
+          ),
+          row_shares=[1, 1],
+        ),
+        rrb.BlueprintPanel(state="collapsed"),
+        rrb.SelectionPanel(state="collapsed"),
+      )
+    )
 
   def log(self, step: int, metrics: dict[str, float]) -> None:
-    self.rr.set_time("control_step", sequence=step)
+    self._set_time(step)
     for key, value in metrics.items():
       self.rr.log(f"metrics/{key}", self.rr.Scalars(float(value)))
+
+  def log_rangefinder(
+    self, step: int, rangefinder: dict[str, tuple[np.ndarray, np.ndarray]]
+  ) -> None:
+    """Log the five fingers' cube views as two strips: surface normal (RGB = shape) and
+    depth (relief). Each finger is concatenated thumb-to-pinky into one image so rerun
+    shows the whole hand at once. Misses (rays that found no cube) are black.
+    """
+    self._set_time(step)
+    shape_imgs, depth_imgs = [], []
+    for finger in _FINGER_ORDER:
+      depth, normal = rangefinder[finger]
+      hit = depth > 0
+      rgb = (np.clip(normal, -1, 1) + 1) * 0.5
+      rgb[~hit] = 0.0
+      shape_imgs.append((rgb * 255).astype(np.uint8))
+      if hit.any():
+        far, near = depth[hit].max(), depth[hit].min()
+        relief = np.where(hit, (far - depth) / (far - near + 1e-9), 0.0)
+      else:
+        relief = np.zeros_like(depth)
+      depth_imgs.append((np.stack([relief] * 3, axis=-1) * 255).astype(np.uint8))
+    self.rr.log("rangefinder/shape", self.rr.Image(self._rf_panel(shape_imgs)))
+    self.rr.log("rangefinder/depth", self.rr.Image(self._rf_panel(depth_imgs)))
+
+  @staticmethod
+  def _rf_panel(imgs: list[np.ndarray], upscale: int = 6) -> np.ndarray:
+    """Concatenate per-finger RGB images thumb-to-pinky with separators, then enlarge."""
+    sep = np.full((imgs[0].shape[0], 2, 3), 40, np.uint8)
+    parts: list[np.ndarray] = []
+    for i, img in enumerate(imgs):
+      parts.append(img)
+      if i < len(imgs) - 1:
+        parts.append(sep)
+    panel = np.concatenate(parts, axis=1)
+    return np.kron(panel, np.ones((upscale, upscale, 1), np.uint8))
+
+  def log_tactile(
+    self,
+    step: int,
+    tactile: dict[str, np.ndarray],
+    normal_scale: float = 3.0,
+    shear_scale: float = 1.5,
+  ) -> None:
+    """Log the five fingers as two heat-mapped strips (normal, shear) plus per-finger
+    force scalars.
+
+    The fingers are concatenated thumb-to-pinky into one image per channel, so rerun
+    always shows the whole hand in a single view (no scattered per-finger panels), and
+    a black-body heat ramp at a fixed scale makes a contact press read as a bright
+    hotspot that goes dark on release.
+    """
+    self._set_time(step)
+    normals = [tactile[f][0] for f in _FINGER_ORDER]
+    shears = [np.linalg.norm(tactile[f][1:], axis=0) for f in _FINGER_ORDER]
+    self.rr.log("tactile/normal", self.rr.Image(self._strip(normals, normal_scale)))
+    self.rr.log("tactile/shear", self.rr.Image(self._strip(shears, shear_scale)))
+    for finger in _FINGER_ORDER:
+      self.rr.log(
+        f"tactile_force/{finger}", self.rr.Scalars(float(tactile[finger][0].sum()))
+      )
+
+  @staticmethod
+  def _heat(x: np.ndarray) -> np.ndarray:
+    """Normalized [0,1] field -> black-body RGB (black->red->yellow->white)."""
+    x = np.clip(x, 0.0, 1.0)
+    rgb = np.stack(
+      [
+        np.clip(1.5 * x, 0, 1),
+        np.clip(1.5 * x - 0.5, 0, 1),
+        np.clip(1.5 * x - 1.0, 0, 1),
+      ],
+      axis=-1,
+    )
+    return (rgb * 255).astype(np.uint8)
+
+  @classmethod
+  def _strip(
+    cls, imgs: list[np.ndarray], scale: float, upscale: int = 16
+  ) -> np.ndarray:
+    """Heat-color each finger grid and concatenate them into one strip with separators."""
+    sep = np.full((imgs[0].shape[0], 2, 3), 40, np.uint8)  # gray gap between fingers
+    parts: list[np.ndarray] = []
+    for i, img in enumerate(imgs):
+      parts.append(cls._heat(img / scale))
+      if i < len(imgs) - 1:
+        parts.append(sep)
+    panel = np.concatenate(parts, axis=1)
+    return np.kron(
+      panel, np.ones((upscale, upscale, 1), np.uint8)
+    )  # enlarge for clarity
 
 
 class Controller:
@@ -70,6 +227,9 @@ class Controller:
     seed: int,
     goal_spin_min: float = 0.0,
     goal_spin_max: float = 0.0,
+    tactile: bool = False,
+    rangefinder: bool = False,
+    mask: bool = False,
   ) -> None:
     self.m = model
     self.policy = policy
@@ -77,11 +237,15 @@ class Controller:
     self.p = params
     self.manual = manual
     self.rerun = rerun
+    self.tactile = tactile
+    self.rangefinder = rangefinder
+    self.mask = mask  # rangefinder: restrict rays to the cube (see through fingers)
     self.rng = np.random.default_rng(seed)
     self.goal_spin = (goal_spin_min, goal_spin_max)  # rad/s, sampled at each reset
 
     self.substep = 0
     self.episode_step = 0
+    self.global_step = 0  # monotonic across episodes, for the rerun sim_time axis
     self.last_action = np.zeros(policy.action_dim, np.float32)
     self.prev_action = np.zeros(policy.action_dim, np.float32)
     self.success_count = 0
@@ -171,8 +335,16 @@ class Controller:
       # bookkeeping (its position is anchored and its orientation evolves in physics).
       self._advance_goal(data, metrics["goal_error"])
     if self.rerun is not None:
-      self.rerun.log(self.episode_step, metrics)
+      self.rerun.log(self.global_step, metrics)
+      if self.tactile:
+        self.rerun.log_tactile(self.global_step, core.read_tactile(data, idx))
+      if self.rangefinder:
+        self.rerun.log_rangefinder(
+          self.global_step,
+          core.cast_rangefinder(self.m, data, idx, cube_only=self.mask),
+        )
     self.episode_step += 1
+    self.global_step += 1
 
   def _advance_goal(self, data, goal_error: float) -> None:
     """Auto goal state machine: hold within threshold, then resample (full SO(3))."""
@@ -216,11 +388,17 @@ class EvalController:
     success_dwell: int,
     fail_dwell: int,
     rerun: _RerunLogger | None,
+    tactile: bool = False,
+    rangefinder: bool = False,
+    mask: bool = False,
   ) -> None:
     self.m = model
     self.policy = policy
     self.idx = index
     self.p = params
+    self.tactile = tactile
+    self.rangefinder = rangefinder
+    self.mask = mask
     self.goals = goals
     self.start_qpos = start_qpos
     self.start_qvel = start_qvel
@@ -272,6 +450,13 @@ class EvalController:
     metrics = core.compute_metrics(self.m, data, idx, goal, self.last, self.prev)
     if self.rerun is not None:
       self.rerun.log(self.global_step, metrics)
+      if self.tactile:
+        self.rerun.log_tactile(self.global_step, core.read_tactile(data, idx))
+      if self.rangefinder:
+        self.rerun.log_rangefinder(
+          self.global_step,
+          core.cast_rangefinder(self.m, data, idx, cube_only=self.mask),
+        )
     self.global_step += 1
     return metrics
 
@@ -367,6 +552,17 @@ class Args:
   """Seconds to linger after a drop/timeout before the next goal (--eval)."""
   rerun: bool = False
   """Stream red-flag diagnostics as scalar time series to rerun."""
+  tactile: bool = False
+  """Attach touch_grid tactile sensors to the five fingertips and stream per-finger
+  taxel images to rerun (viz only; does not change the policy or the dynamics). Implies
+  rerun streaming."""
+  rangefinder: bool = False
+  """Cast a dense ray grid from each fingertip at the cube and stream the per-finger depth
+  and surface-normal (shape) images to rerun (viz only; a geometry probe, not a force
+  sensor). Implies rerun streaming."""
+  mask: bool = False
+  """With --rangefinder: restrict the rays to the cube's render group, so they see through
+  the fingers and show a clean cube-only image (the cube is alone in its group)."""
   seed: int = 0
   no_viewer: bool = False
   """Run headless for a fixed number of control steps (smoke test)."""
@@ -382,6 +578,8 @@ def main(args: Args) -> None:
     goal_damping=args.goal_damping,
     inverted=args.inverted,
     gravity=args.gravity,
+    tactile=args.tactile,
+    rangefinder=args.rangefinder,
   )
   onnx_path = core.resolve_onnx(
     args.wandb_run_path,
@@ -397,9 +595,13 @@ def main(args: Args) -> None:
   params = core.build_params(
     cfg, model, index, policy, drop_height=args.drop_height, inverted=args.inverted
   )
-  rerun = _RerunLogger() if args.rerun else None
-
   step_dt = params.decimation * model.opt.timestep
+  rerun = (
+    _RerunLogger(tactile=args.tactile, rangefinder=args.rangefinder, step_dt=step_dt)
+    if (args.rerun or args.tactile or args.rangefinder)
+    else None
+  )
+
   data = mujoco.MjData(model)
 
   if args.eval:
@@ -418,6 +620,9 @@ def main(args: Args) -> None:
       success_dwell=int(round(args.success_dwell / step_dt)),
       fail_dwell=int(round(args.fail_dwell / step_dt)),
       rerun=rerun,
+      tactile=args.tactile,
+      rangefinder=args.rangefinder,
+      mask=args.mask,
     )
     controller.begin_trial(data)
     print(
@@ -435,6 +640,9 @@ def main(args: Args) -> None:
       seed=args.seed,
       goal_spin_min=args.goal_spin_min,
       goal_spin_max=args.goal_spin_max,
+      tactile=args.tactile,
+      rangefinder=args.rangefinder,
+      mask=args.mask,
     )
     controller.reset(data)
     if args.manual:

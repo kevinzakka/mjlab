@@ -352,12 +352,156 @@ def _make_goal_balljoint(spec, damping: float, anchor_pos) -> None:
   key.qpos = list(key.qpos) + [1.0, 0.0, 0.0, 0.0]
 
 
+# --------------------------------------------------------------------------------------
+# Optional fingertip tactile sensors (visualization only; see sim2sim_play --tactile).
+# --------------------------------------------------------------------------------------
+# A first-party MuJoCo touch_grid sensor per fingertip, attached to a fresh site on the
+# distal-phalanx body and aimed (its -z view axis) into the cube. Massless sites plus a
+# passive measurement sensor, so the dynamics are bit-for-bit unchanged -- the policy's
+# model and observations never see these.
+TACTILE_GRID = 8  # taxels per side (size_x == size_y)
+TACTILE_FOV = "120 80"  # horizontal/vertical field of view (deg); wide so off-axis
+# fingertip contacts during reorientation stay inside the cone (viz, not a precise sensor)
+TACTILE_NCHANNEL = 3  # normal + 2 shear channels
+
+
+def _finger_name(site: str) -> str:
+  """'right_thumb_fingertip' -> 'thumb'."""
+  return site.replace("right_", "").replace("_fingertip", "")
+
+
+def _quat_neg_z_to(target: np.ndarray) -> np.ndarray:
+  """Unit quat (wxyz) whose rotation maps the local -z axis onto ``target``.
+
+  touch_grid "looks" along the site's -z, so this aims a fresh site at ``target``
+  (the direction into the cube). Shortest-arc; the roll about the view axis is left
+  arbitrary (irrelevant for a force-magnitude visualization).
+  """
+  a = np.array([0.0, 0.0, -1.0])
+  b = target / (np.linalg.norm(target) + 1e-12)
+  c = float(np.dot(a, b))
+  if c < -0.999999:  # anti-parallel: any perpendicular axis, 180 deg
+    return np.array([0.0, 1.0, 0.0, 0.0])
+  v = np.cross(a, b)
+  q = np.array([1.0 + c, v[0], v[1], v[2]])
+  return q / np.linalg.norm(q)
+
+
+def _add_tactile_sensors(spec) -> None:
+  """Add a touch_grid tactile sensor per fingertip to ``spec`` (in place, viz only).
+
+  For each fingertip, a new site is placed on its distal-phalanx body, oriented so the
+  sensor's -z points along the pad's outward normal -- the capsule face a grasped cube
+  actually presses against. That normal is the cube direction with the pad capsule's long
+  axis removed, both read from a throwaway forward-kinematics pass at the home keyframe
+  (the fingers fan out, so each differs). The site sits at the pad center (the capsule
+  radius provides the standoff, so contacts subtend a finite cone). Sensors are named
+  ``tactile_<finger>``.
+  """
+  spec.activate_plugin("mujoco.sensor.touch_grid")
+  obj = mujoco.mjtObj
+  # Compile a COPY for the FK probe: compiling the live spec would finalize it and
+  # corrupt the subsequent add_site/add_sensor edits (they would all collapse onto the
+  # last body). The copy is thrown away; the live spec stays editable.
+  probe = spec.copy().compile()  # throwaway compile, just to read home-pose geometry
+  d = mujoco.MjData(probe)
+  d.qpos[:] = probe.key_qpos[_name2id(probe, obj.mjOBJ_KEY, "init_state")]
+  mujoco.mj_forward(probe, d)
+  cube_w = d.xpos[_name2id(probe, obj.mjOBJ_BODY, "cube/cube")].copy()
+
+  for site in FINGERTIP_SITES:
+    finger = _finger_name(site)
+    bid = int(probe.site_bodyid[_name2id(probe, obj.mjOBJ_SITE, f"robot/{site}")])
+    bname = mujoco.mj_id2name(probe, obj.mjOBJ_BODY, bid)
+    # Pad outward normal: cube direction with the capsule long axis (geom local z)
+    # projected out, in the distal-phalanx body frame.
+    pad = _name2id(probe, obj.mjOBJ_GEOM, f"robot/right_{finger}_pad_collision")
+    axis_w = d.geom_xmat[pad].reshape(3, 3)[:, 2]
+    to_cube = cube_w - d.geom_xpos[pad]
+    to_cube /= np.linalg.norm(to_cube)
+    outward_w = to_cube - np.dot(to_cube, axis_w) * axis_w
+    outward_b = d.xmat[bid].reshape(3, 3).T @ (outward_w / np.linalg.norm(outward_w))
+
+    spec.body(bname).add_site(
+      name=f"tactile_site_{finger}",
+      pos=probe.geom_pos[pad].tolist(),
+      quat=_quat_neg_z_to(outward_b).tolist(),
+    )
+    plugin = spec.add_plugin(
+      name=f"tactile_{finger}",
+      plugin_name="mujoco.sensor.touch_grid",
+      active=True,
+    )
+    plugin.config = {
+      "nchannel": str(TACTILE_NCHANNEL),
+      "size": f"{TACTILE_GRID} {TACTILE_GRID}",
+      "fov": TACTILE_FOV,
+      "gamma": "0",
+    }
+    sensor = spec.add_sensor(
+      type=mujoco.mjtSensor.mjSENS_PLUGIN,
+      objtype=obj.mjOBJ_SITE,
+      objname=f"tactile_site_{finger}",
+      name=f"tactile_{finger}",
+    )
+    sensor.plugin = plugin
+
+
+# --------------------------------------------------------------------------------------
+# Optional fingertip rangefinder probe (visualization only; see sim2sim_play
+# --rangefinder). A geometry probe, not a force sensor: each fingertip casts a dense grid
+# of orthographic rays at the cube and reads per-ray distance + surface normal, so the
+# local cube surface (faces, edges, corners) is resolved densely, unlike the sparse
+# contact-point touch_grid. We cast the rays ourselves with ``mj_ray`` (rather than the
+# built-in rangefinder sensor, which can't filter geometry) so that rays hitting other
+# fingers can be dropped, leaving a clean cube-only image. Massless sites only, so the
+# dynamics and the policy's model are unchanged.
+RANGEFINDER_GRID = 20  # rays per side
+RANGEFINDER_EXTENT = 0.028  # orthographic patch size (m) seen per fingertip
+
+
+def _add_rangefinder_sites(spec) -> None:
+  """Add a fingertip site per finger, aimed (-z) at the cube, for manual raycasting.
+
+  Mirrors the tactile site placement: each site sits at the pad capsule center on a
+  fingertip's distal-phalanx body (already ~a capsule-radius inside the finger, a clean
+  ray origin), with its -z pointing at the cube cradle. ``cast_rangefinder`` casts a ray
+  grid from each. Sites are massless, so the dynamics are unchanged. Sites are named
+  ``rf_site_<finger>``.
+  """
+  obj = mujoco.mjtObj
+  probe = spec.copy().compile()  # throwaway compile to read home-pose geometry
+  d = mujoco.MjData(probe)
+  d.qpos[:] = probe.key_qpos[_name2id(probe, obj.mjOBJ_KEY, "init_state")]
+  mujoco.mj_forward(probe, d)
+  cube_w = d.xpos[_name2id(probe, obj.mjOBJ_BODY, "cube/cube")].copy()
+
+  for site in FINGERTIP_SITES:
+    finger = _finger_name(site)
+    bid = int(probe.site_bodyid[_name2id(probe, obj.mjOBJ_SITE, f"robot/{site}")])
+    bname = mujoco.mj_id2name(probe, obj.mjOBJ_BODY, bid)
+    pad = _name2id(probe, obj.mjOBJ_GEOM, f"robot/right_{finger}_pad_collision")
+    axis_w = d.geom_xmat[pad].reshape(3, 3)[:, 2]
+    to_cube = cube_w - d.geom_xpos[pad]
+    to_cube /= np.linalg.norm(to_cube)
+    outward_w = to_cube - np.dot(to_cube, axis_w) * axis_w
+    outward_b = d.xmat[bid].reshape(3, 3).T @ (outward_w / np.linalg.norm(outward_w))
+
+    spec.body(bname).add_site(
+      name=f"rf_site_{finger}",
+      pos=probe.geom_pos[pad].tolist(),
+      quat=_quat_neg_z_to(outward_b).tolist(),
+    )
+
+
 def build_model(
   use_mesh_collisions: bool = False,
   goal_balljoint: bool = False,
   goal_damping: float = 2e-3,
   inverted: bool = False,
   gravity: float | None = None,
+  tactile: bool = False,
+  rangefinder: bool = False,
 ) -> tuple[mujoco.MjModel, ManagerBasedRlEnvCfg]:
   """Compile the CPU model from the same env cfg used for training, with sim opts.
 
@@ -367,6 +511,10 @@ def build_model(
   (so the goal can be dragged and/or spun); ``goal_damping`` sets how fast it loses speed.
   ``gravity`` overrides |g| (m/s^2, points -z); use it to match the strength an inverted
   policy was trained at when it used a gravity curriculum that has not yet reached 9.81.
+  ``tactile`` adds passive touch_grid sensors to the five fingertips for visualization
+  (see ``sim2sim_play --tactile``); it leaves the dynamics and the policy's model
+  unchanged. ``rangefinder`` similarly adds an orthographic rangefinder camera per
+  fingertip (a dense geometry probe; see ``sim2sim_play --rangefinder``).
   """
   cfg = sharpa_reorient_cube_env_cfg(
     play=True, use_mesh_collisions=use_mesh_collisions, inverted=inverted
@@ -382,6 +530,10 @@ def build_model(
     hand_pos = np.asarray(cfg.scene.entities["robot"].init_state.pos, dtype=float)
     anchor = hand_pos + np.asarray(goal_cfg.viz.offset, dtype=float)
     _make_goal_balljoint(scene.spec, goal_damping, anchor)
+  if tactile:
+    _add_tactile_sensors(scene.spec)
+  if rangefinder:
+    _add_rangefinder_sites(scene.spec)
   model = scene.compile()
   cfg.sim.mujoco.apply(model)  # timestep, elliptic cone, impratio, solver iters.
   if gravity is not None:
@@ -408,6 +560,12 @@ class ModelIndex:
   joint_upper: np.ndarray  # (nu,) per-joint upper limit (jnt_range), policy order
   home_qpos: np.ndarray  # (nq,) from init_state keyframe
   hand_body_ids: frozenset  # robot subtree body ids (for self-contact classification)
+  # finger -> (sensordata address, taxels-per-side) for optional touch_grid sensors;
+  # empty unless the model was built with tactile=True.
+  tactile: dict[str, tuple[int, int]] = dataclasses.field(default_factory=dict)
+  # finger -> site id of the fingertip rangefinder probe; empty unless the model was
+  # built with rangefinder=True (rays are cast from these in cast_rangefinder).
+  rangefinder: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
 def _name2id(model, objtype, name: str) -> int:
@@ -469,6 +627,23 @@ def build_index(model, policy: Policy) -> ModelIndex:
     if (mujoco.mj_id2name(model, obj.mjOBJ_BODY, i) or "").startswith("robot/")
   )
 
+  # Optional touch_grid sensors (present only when built with tactile=True): map each
+  # finger to its sensordata slice. dim = nchannel * size_x * size_y, with nchannel 3
+  # and a square grid, so taxels-per-side = sqrt(dim / 3).
+  tactile: dict[str, tuple[int, int]] = {}
+  for i in range(model.nsensor):
+    name = mujoco.mj_id2name(model, obj.mjOBJ_SENSOR, i) or ""
+    if name.startswith("tactile_"):
+      hw = int(round((model.sensor_dim[i] / 3) ** 0.5))
+      tactile[name[len("tactile_") :]] = (int(model.sensor_adr[i]), hw)
+
+  # Optional fingertip rangefinder sites (rangefinder=True): finger -> site id.
+  rangefinder: dict[str, int] = {}
+  for i in range(model.nsite):
+    name = mujoco.mj_id2name(model, obj.mjOBJ_SITE, i) or ""
+    if name.startswith("rf_site_"):
+      rangefinder[name[len("rf_site_") :]] = i
+
   return ModelIndex(
     joint_qadr=np.array(joint_qadr),
     joint_vadr=np.array(joint_vadr),
@@ -487,7 +662,88 @@ def build_index(model, policy: Policy) -> ModelIndex:
     joint_upper=np.array(jhi),
     home_qpos=home_qpos,
     hand_body_ids=hand_body_ids,
+    tactile=tactile,
+    rangefinder=rangefinder,
   )
+
+
+def cast_rangefinder(
+  model, data, index: ModelIndex, cube_only: bool = True
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+  """Per-finger ``{finger: (depth (G, G), normal (G, G, 3))}`` by orthographic raycasting.
+
+  For each fingertip site, casts a ``RANGEFINDER_GRID``^2 grid of parallel rays along the
+  site -z over a ``RANGEFINDER_EXTENT`` patch. depth is the per-ray distance to the first
+  hit (-1 at a miss); normal is the surface normal there.
+
+  With ``cube_only`` (the ``--mask`` flag), rays are restricted to the cube's render group
+  (the cube is alone in it), so they ignore the hand entirely: a finger between the site
+  and the cube is seen *through*, giving a clean, fully-covered cube image. Without it,
+  rays hit the nearest geometry (the cube plus whatever fingers are in view). Empty dict if
+  the model was built without rangefinder sites.
+  """
+  g = RANGEFINDER_GRID
+  offsets = (
+    (np.arange(g) + 0.5) / g - 0.5
+  ) * RANGEFINDER_EXTENT  # centered, span extent
+
+  # Restrict rays to the cube's render group(s) so they pass through the hand. The cube
+  # body is alone in its group, so this yields a clean cube-only image.
+  geomgroup = None
+  if cube_only:
+    geomgroup = np.zeros(6, np.uint8)
+    ga = int(model.body_geomadr[index.cube_bid])
+    for geom in range(ga, ga + int(model.body_geomnum[index.cube_bid])):
+      geomgroup[int(model.geom_group[geom])] = 1
+
+  geomid = np.array([-1], np.int32)
+  normal = np.zeros(3)
+  cube_center = data.xpos[index.cube_bid]
+  out: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+  for finger, sid in index.rangefinder.items():
+    origin0 = data.site_xpos[sid]
+    # Aim the parallel ray grid at the live cube center each step, so the probe tracks the
+    # cube as the fingers gait it (a fixed finger-frame aim would drift off the cube). The
+    # grid spans a patch on the plane perpendicular to that view direction.
+    direction = cube_center - origin0
+    direction = direction / (np.linalg.norm(direction) + 1e-9)
+    up_ref = data.site_xmat[sid].reshape(3, 3)[:, 1]
+    x_axis = np.cross(direction, up_ref)
+    if np.linalg.norm(x_axis) < 1e-6:
+      x_axis = np.cross(direction, np.array([1.0, 0.0, 0.0]))
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(x_axis, direction)
+    # Exclude the finger we are mounted on (only relevant when not masking to the cube).
+    body_exclude = -1 if cube_only else int(model.site_bodyid[sid])
+    depth = np.full((g, g), -1.0)
+    norm = np.zeros((g, g, 3))
+    for r in range(g):
+      base = origin0 + offsets[r] * y_axis
+      for c in range(g):
+        origin = base + offsets[c] * x_axis
+        dist = mujoco.mj_ray(
+          model, data, origin, direction, geomgroup, 1, body_exclude, geomid, normal
+        )
+        if dist >= 0:
+          depth[r, c] = dist
+          norm[r, c] = normal
+    out[finger] = (depth, norm)
+  return out
+
+
+def read_tactile(data, index: ModelIndex) -> dict[str, np.ndarray]:
+  """Per-finger taxel images from the touch_grid sensors, ``{finger: (nchannel, H, W)}``.
+
+  Channels are ``[normal, shear, shear]``. Returns an empty dict if the model was built
+  without tactile sensors. The slices are copied so callers can hold frames across steps.
+  """
+  out: dict[str, np.ndarray] = {}
+  for finger, (adr, hw) in index.tactile.items():
+    n = TACTILE_NCHANNEL * hw * hw
+    out[finger] = (
+      data.sensordata[adr : adr + n].reshape(TACTILE_NCHANNEL, hw, hw).copy()
+    )
+  return out
 
 
 # --------------------------------------------------------------------------------------

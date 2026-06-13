@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 
+import mujoco
 import numpy as np
 import pytest
 import torch
@@ -615,3 +616,91 @@ def test_gravity_curriculum_logs(grav_env):
   log = env.extras["log"]
   assert float(log["Curriculum/gravity_ceiling"]) == pytest.approx(4.0)
   assert "Curriculum/gravity_success_ema" in log
+
+
+# --- sim2sim fingertip visualization sensors (viz only) ---------------------
+
+_FINGERS = {"thumb", "index", "middle", "ring", "pinky"}
+
+
+def _sim2sim_index(model):
+  """Build a ModelIndex from a compiled model, using its actuated-joint order in place of
+  a real ONNX policy (build_index only reads ``joint_names`` / ``action_scale``)."""
+  from typing import cast
+
+  from mjlab.tasks.reorient.scripts import sim2sim_core as core
+
+  joint_names = [
+    (
+      mujoco.mj_id2name(
+        model, mujoco.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[a, 0])
+      )
+      or ""
+    ).split("robot/")[-1]
+    for a in range(model.nu)
+  ]
+  stub = type(
+    "P", (), {"joint_names": joint_names, "action_scale": np.zeros(model.nu)}
+  )()
+  return core.build_index(model, cast("core.Policy", stub))
+
+
+def _final_state(m: mujoco.MjModel) -> np.ndarray:
+  """Hold the home grasp for 150 steps and return the resulting qpos (for the
+  no-dynamics-change checks)."""
+  d = mujoco.MjData(m)
+  key = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_KEY, "init_state")
+  d.qpos[:] = m.key_qpos[key]
+  hold = d.qpos[m.jnt_qposadr[: m.nu]].copy()
+  for _ in range(150):
+    d.ctrl[:] = hold
+    mujoco.mj_step(m, d)
+  return d.qpos.copy()
+
+
+def test_tactile_sensors_are_passive_and_optional() -> None:
+  """Building with tactile=True adds five touch_grid sensors but does not change the
+  dynamics: an identical-seed rollout is bit-for-bit identical to the plain model."""
+  from mjlab.tasks.reorient.scripts import sim2sim_core as core
+
+  m0, _ = core.build_model(inverted=False, tactile=False)
+  m1, _ = core.build_model(inverted=False, tactile=True)
+  assert m1.nsensor == m0.nsensor + 5
+  assert (m1.nq, m1.nv, m1.nbody) == (m0.nq, m0.nv, m0.nbody)
+  np.testing.assert_array_equal(_final_state(m0), _final_state(m1))
+
+
+def test_read_tactile_returns_per_finger_grids() -> None:
+  """The reader yields a (nchannel, H, W) image per fingertip from sensordata."""
+  from mjlab.tasks.reorient.scripts import sim2sim_core as core
+
+  m, _ = core.build_model(inverted=False, tactile=True)
+  index = _sim2sim_index(m)
+  data = mujoco.MjData(m)
+  mujoco.mj_forward(m, data)
+  tactile = core.read_tactile(data, index)
+  assert set(tactile) == _FINGERS
+  for img in tactile.values():
+    assert img.shape == (core.TACTILE_NCHANNEL, core.TACTILE_GRID, core.TACTILE_GRID)
+
+
+def test_rangefinder_is_passive_and_casts_per_finger() -> None:
+  """rangefinder=True adds five massless fingertip sites and leaves the dynamics
+  unchanged; cast_rangefinder returns a (depth, normal) image per finger."""
+  from mjlab.tasks.reorient.scripts import sim2sim_core as core
+
+  m0, _ = core.build_model(inverted=False, rangefinder=False)
+  m1, _ = core.build_model(inverted=False, rangefinder=True)
+  assert m1.nsite == m0.nsite + 5
+  assert (m1.nq, m1.nv, m1.nbody) == (m0.nq, m0.nv, m0.nbody)
+  np.testing.assert_array_equal(_final_state(m0), _final_state(m1))
+
+  index = _sim2sim_index(m1)
+  data = mujoco.MjData(m1)
+  mujoco.mj_forward(m1, data)
+  rf = core.cast_rangefinder(m1, data, index, cube_only=True)
+  assert set(rf) == _FINGERS
+  g = core.RANGEFINDER_GRID
+  for depth, normal in rf.values():
+    assert depth.shape == (g, g)
+    assert normal.shape == (g, g, 3)

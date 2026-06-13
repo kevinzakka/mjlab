@@ -14,6 +14,20 @@ Added
   policy chains reorientations. A translucent ghost cube above the hand shows the
   goal. The hand is vendored as a kinematic-only model with its actuators,
   armature, and frictionloss expressed in config.
+- Added a ``--tactile`` flag to the reorient sim2sim playback
+  (``sim2sim_play``) that attaches ``touch_grid`` tactile sensors to the five
+  Sharpa fingertips and streams per-finger taxel images (normal and shear) to
+  rerun during a policy rollout. The sensors are massless sites plus a passive
+  measurement, applied only to the visualization model, so the dynamics and the
+  policy's observations are unchanged (an identical-seed rollout is bit-for-bit
+  identical with and without them); no retraining is needed.
+- Added a ``--rangefinder`` flag to the reorient sim2sim playback that casts a
+  dense ray grid from each fingertip at the cube and streams the per-finger depth
+  and surface-normal (shape) images to rerun. It is a geometry probe rather than a
+  force sensor: where ``--tactile`` shows how hard the cube presses, this shows the
+  local cube surface (faces, edges, corners). ``--mask`` restricts the rays to the
+  cube's render group so they see through the fingers for a clean cube-only image.
+  Massless sites only, so the dynamics and the policy are unchanged.
 - Added ``BuiltinDcMotorActuator``, a native MuJoCo ``<dcmotor>`` wrapper.
   Supports voltage / position / velocity input modes with back-EMF,
   configurable motor constants, and optional integral, slew, inductance,
