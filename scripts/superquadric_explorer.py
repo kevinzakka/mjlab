@@ -38,7 +38,7 @@ def build(
   spec = mujoco.MjSpec()
   mesh = spec.add_mesh(name="obj")
   mesh.make_supersphere(resolution=int(resolution), e=float(e), n=float(n))
-  mesh.scale = list(scale)
+  mesh.scale = np.asarray(scale, dtype=float)
   # maxhullvert <= 3 means "unlimited" in MuJoCo (-1); the UI uses 0 for that.
   mesh.maxhullvert = int(maxhullvert) if maxhullvert > 3 else -1
   body = spec.worldbody.add_body(name="obj_body")
